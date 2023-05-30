@@ -1,0 +1,10 @@
+{
+    "version": 1,
+    "layers": {
+      "dams": {
+        "source": "mapbox://tileset-source/nature-watch/dams-test-source",
+        "minzoom": 0,
+        "maxzoom": 5
+      }
+    }
+  }
