@@ -23,7 +23,7 @@ WORKDIR /app
 COPY . .
 
 # Make the shell script executable
-RUN chmod +x createBuiltTiles.sh.sh
+RUN chmod +x createBuiltTiles.sh
 
 # Run the script
-CMD ["./createBuiltTiles.sh.sh"]
+CMD ["./createBuiltTiles.sh"]
