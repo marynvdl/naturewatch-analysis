@@ -6,6 +6,9 @@ mkdir -p /container/data/colored
 mkdir -p /container/data/masked
 mkdir -p /container/data/output
 
+# Authenticate to Google Cloud Storage
+gcloud auth activate-service-account --key-file=/tmp/keys/key.json
+
 # Copy images from gc to local repo
 gsutil cp gs://nature-watch-bucket/COGS/built/built2022/built2022_16.tif /container/data/input
 
