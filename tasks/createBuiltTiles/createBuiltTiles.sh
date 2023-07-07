@@ -2,9 +2,6 @@
 
 # Make the temporary data directories
 mkdir -p /container/data/input
-mkdir -p /container/data/merged
-mkdir -p /container/data/colored
-mkdir -p /container/data/masked
 mkdir -p /container/data/output
 
 # Authenticate to Google Cloud Storage
@@ -15,25 +12,21 @@ gcloud auth activate-service-account --key-file=/tmp/keys/key.json
 echo "2. Copying from GC"
 gsutil -m cp gs://nature-watch-bucket/COGS/built/built2022/* /container/data/input
 
-# Merge all images into a single image and delete input
-echo "3. Merging into single image"
-gdal_merge.py -o /container/data/merged/merged.tif /container/data/input/*.tif
-rm -r /container/data/input/*
+# Build a virtual dataset from all input images
+echo "3. Building virtual dataset"
+gdalbuildvrt /container/data/merged.vrt /container/data/input/*.tif
 
-# Apply a color-relief to the merged image and delete merged
+# Apply a color-relief to the merged image
 echo "4. Applying color relief"
-gdaldem color-relief /container/data/merged/merged.tif ./color.txt /container/data/colored/colored.tif
-rm -r /container/data/merged/*
+gdaldem color-relief /container/data/merged.vrt ./color.txt /container/data/colored.vrt -of VRT
 
-# Mask no data values and delete colored
+# Mask no data values
 echo "5. Mask no data"
-gdal_translate -a_nodata 0 /container/data/colored/colored.tif /container/data/masked/masked.tif
-rm -r /container/data/colored/*
+gdal_translate -a_nodata 0 /container/data/colored.vrt /container/data/masked.vrt -of VRT
 
-# Make tiles and delete masked
+# Make tiles
 echo "6. Make tiles"
-gdal2tiles.py -z 0-10 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/masked/masked.tif /container/data/output
-rm -r /container/data/masked/*
+gdal2tiles.py -z 0-10 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/masked.vrt /container/data/output
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
