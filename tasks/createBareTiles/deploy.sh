@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Stop and remove the Docker container if it exists
+# Stop & remove the Docker container if it exists
 docker rm -f create-bare-tiles || true
 
 # Build docker image and run container
