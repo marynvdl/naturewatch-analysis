@@ -1,0 +1,39 @@
+name: Deploy createBareTiles
+
+on:
+  push:
+    paths:
+      - 'tasks/createBareTiles/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      - name: Check if instance is running
+        id: check-instance
+        run: |
+          STATUS=$(gcloud compute instances describe nw-analysis-vm1 --zone europe-west9-a --format='get(status)')
+          if [[ "$STATUS" == "RUNNING" ]]; then
+            echo "::set-output name=instance_running::true"
+          else
+            echo "::set-output name=instance_running::false"
+          fi
+
+      - name: Start Compute Engine Instance
+        if: steps.check-instance.outputs.instance_running != 'true'
+        run: |
+          gcloud compute instances start nw-analysis-vm1 --zone europe-west9-a
+
+      - name: SSH and Deploy
+        run: |
+          gcloud compute ssh nw-analysis-vm1 --zone europe-west9-a --command "sudo apt-get update && sudo apt-get install git && git clone https://github.com/marynvdl/naturewatch-analysis && chmod +x ~/naturewatch-analysis/tasks/createBareTiles/deploy.sh && ~/naturewatch-analysis/tasks/createBareTiles/deploy.sh"
