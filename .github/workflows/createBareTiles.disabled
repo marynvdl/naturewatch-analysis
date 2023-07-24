@@ -14,10 +14,11 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
+    
+      - name: Authenticate with GCP
+        uses: google-github-actions/auth@v1.1.1
         with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: true
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Check if instance is running
         id: check-instance
