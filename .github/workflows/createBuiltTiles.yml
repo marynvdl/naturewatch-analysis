@@ -37,4 +37,4 @@ jobs:
 
       - name: SSH and Deploy
         run: |
-          gcloud compute ssh nw-analysis-vm1 --zone europe-west9-a --command "sudo apt-get update && sudo apt-get install git && git clone https://github.com/marynvdl/naturewatch-analysis && chmod +x ~/naturewatch-analysis/tasks/createBuiltTiles/deploy.sh && ~/naturewatch-analysis/tasks/createBuiltTiles/deploy.sh"
+          gcloud compute ssh nw-analysis-vm1 --zone europe-west9-a --command "sudo apt-get update && sudo apt-get install git && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
