@@ -1,2 +1,2 @@
 # naturewatch-analysis
-Scripts and notebooks that prepare map layers to be served in the naturewatch-app
+Shell scripts using gdal and docker to create raster tiles to be served in the naturewatch-app
