@@ -14,27 +14,33 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
-    
+
       - name: Authenticate with GCP
         uses: google-github-actions/auth@v1.1.1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Check if instance is running
-        id: check-instance
+      - name: Create Compute Engine Instance
         run: |
-          STATUS=$(gcloud compute instances describe nw-analysis-vm1 --zone europe-west9-a --format='get(status)')
-          if [[ "$STATUS" == "RUNNING" ]]; then
-            echo "::set-output name=instance_running::true"
-          else
-            echo "::set-output name=instance_running::false"
-          fi
+          gcloud compute instances create nw-analysis-vm-built \
+            --zone=europe-west9-a \
+            --machine-type=e2-standard-8 \
+            --image=debian-11-bullseye-v20230629 \
+            --image-project=debian-cloud
 
-      - name: Start Compute Engine Instance
-        if: steps.check-instance.outputs.instance_running != 'true'
+      - name: Upload Service Account Key to VM
         run: |
-          gcloud compute instances start nw-analysis-vm1 --zone europe-west9-a
+          echo "${{ secrets.GCP_SA_KEY }}" > key.json
+          gcloud compute scp key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
+          rm key.json
 
       - name: SSH and Deploy
         run: |
-          gcloud compute ssh nw-analysis-vm1 --zone europe-west9-a --command "sudo apt-get update && sudo apt-get install git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
+          # Wait for the VM to be fully initialized
+          sleep 60
+          gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "sudo apt-get update && sudo apt-get install git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
+
+      - name: Delete Compute Engine Instance
+        if: success() # This ensures that the VM is deleted only if the previous steps were successful.
+        run: |
+          gcloud compute instances delete nw-analysis-vm-built --zone=europe-west9-a --quiet
