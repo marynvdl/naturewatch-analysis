@@ -73,8 +73,3 @@ jobs:
             chmod +x deploy.sh 
             sudo ./deploy.sh
           "
-
-      - name: Delete Compute Engine Instance
-        if: success() # This ensures that the VM is deleted only if the previous steps were successful.
-        run: |
-          gcloud compute instances delete nw-analysis-vm-built --zone=europe-west9-a --quiet
