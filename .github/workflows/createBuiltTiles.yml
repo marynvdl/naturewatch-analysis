@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tasks/createBuiltTiles/**'
+      - '.github/workflows/createBuiltTiles.yml'
 
 jobs:
   deploy:
