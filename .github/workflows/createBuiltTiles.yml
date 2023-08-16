@@ -24,7 +24,7 @@ jobs:
       - name: Create Compute Engine Instance
         run: |
           # Check if the VM exists
-          gcloud compute instances list --filter="name=nw-analysis-vm-built" | grep "nw-analysis-vm-built"
+          gcloud compute instances list --filter="name=nw-analysis-vm-built" | grep "nw-analysis-vm-built" || true
           VM_EXISTS=$?  # Exit status of grep (0 if found, 1 if not found)
           
           # Create the VM if it doesn't exist
