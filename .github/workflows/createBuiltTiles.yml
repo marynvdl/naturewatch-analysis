@@ -66,10 +66,10 @@ jobs:
             # Allow the current user to run Docker commands without sudo
             sudo usermod -aG docker $USER
       
-            # Dployment logic
+            # Deployment logic
             rm -rf ~/naturewatch-analysis 
             git clone https://github.com/marynvdl/naturewatch-analysis 
             cd ~/naturewatch-analysis/tasks/createBuiltTiles 
             chmod +x deploy.sh 
-            sudo ./deploy.sh
+            ./deploy.sh
           "
