@@ -21,14 +21,24 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Create Compute Engine Instance
+      - name: Create Compute Engine Instance (if it doesn't exist)
         run: |
-          gcloud compute instances create nw-analysis-vm-built \
-            --zone=europe-west9-a \
-            --machine-type=e2-standard-8 \
-            --image=debian-11-bullseye-v20230629 \
-            --image-project=debian-cloud
-
+          set -e
+          INSTANCE_NAME="nw-analysis-vm-built"
+          ZONE="europe-west9-a"
+          
+          # Check if the instance exists
+          if ! gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE > /dev/null 2>&1; then
+            echo "Instance does not exist. Creating..."
+            gcloud compute instances create $INSTANCE_NAME \
+              --zone=$ZONE \
+              --machine-type=e2-standard-8 \
+              --image=debian-11-bullseye-v20230629 \
+              --image-project=debian-cloud
+          else
+            echo "Instance already exists. Skipping creation."
+          fi
+        
       - name: Upload Service Account Key to VM
         run: |
           echo "${{ secrets.GCP_SA_KEY }}" > key.json
@@ -61,7 +71,7 @@ jobs:
             git clone https://github.com/marynvdl/naturewatch-analysis 
             cd ~/naturewatch-analysis/tasks/createBuiltTiles 
             chmod +x deploy.sh 
-            ./deploy.sh
+            sudo ./deploy.sh
           "
 
       - name: Delete Compute Engine Instance
