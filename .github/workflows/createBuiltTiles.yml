@@ -23,11 +23,17 @@ jobs:
 
       - name: Create Compute Engine Instance
         run: |
-          gcloud compute instances create nw-analysis-vm-built \
-            --zone=europe-west9-a \
-            --machine-type=e2-standard-8 \
-            --image=debian-11-bullseye-v20230629 \
-            --image-project=debian-cloud
+          # Check if the VM exists
+          VM_EXISTS=$(gcloud compute instances list --filter="name=nw-analysis-vm-built" --format="count[no-pad]")
+      
+          # Create the VM if it doesn't exist
+          if [ "$VM_EXISTS" -eq "0" ]; then
+            gcloud compute instances create nw-analysis-vm-built \
+              --zone=europe-west9-a \
+              --machine-type=e2-standard-8 \
+              --image=debian-11-bullseye-v20230629 \
+              --image-project=debian-cloud
+          fi
 
       - name: Upload Service Account Key to VM
         run: |
@@ -35,11 +41,34 @@ jobs:
           gcloud compute scp key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
           rm key.json
 
-      - name: SSH and Deploy
-        run: |
-          # Wait for the VM to be fully initialized
-          sleep 60
-          gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "sudo apt-get update && sudo apt-get install -y git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
+          - name: SSH and Deploy
+          run: |
+            # Wait for the VM to be fully initialized
+            sleep 60
+            gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "
+              # Update package information
+              sudo apt-get update
+        
+              # Install Git
+              sudo apt-get install -y git
+        
+              # Install Docker
+              sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+              curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+              sudo add-apt-repository 'deb [arch=amd64] https://download.docker.com/linux/debian buster stable'
+              sudo apt-get update
+              sudo apt-get install -y docker-ce
+        
+              # Allow the current user to run Docker commands without sudo
+              sudo usermod -aG docker $USER
+        
+              # Dployment logic
+              rm -rf ~/naturewatch-analysis 
+              git clone https://github.com/marynvdl/naturewatch-analysis 
+              cd ~/naturewatch-analysis/tasks/createBuiltTiles 
+              chmod +x deploy.sh 
+              ./deploy.sh
+            "
 
       - name: Delete Compute Engine Instance
         if: success() # This ensures that the VM is deleted only if the previous steps were successful.
