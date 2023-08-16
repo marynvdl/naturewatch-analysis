@@ -42,7 +42,7 @@ jobs:
       - name: Upload Service Account Key to VM
         run: |
           echo "${{ secrets.GCP_SA_KEY }}" > key.json
-          gcloud compute scp key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
+          gcloud compute scp --verbosity=debug key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
           rm key.json
 
       - name: SSH and Deploy
