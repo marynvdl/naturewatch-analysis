@@ -41,7 +41,9 @@ jobs:
         
       - name: Upload Service Account Key to VM
         run: |
-          echo "${{ secrets.GCP_SA_KEY_FORMATTED }}" > key.json
+          cat <<-EOM >key.json
+          ${{ secrets.GCP_SA_KEY_FORMATTED }}
+          EOM
           gcloud compute scp --verbosity=debug key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
           rm key.json
 
