@@ -38,7 +38,7 @@ jobs:
         run: |
           # Wait for the VM to be fully initialized
           sleep 60
-          gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "sudo apt-get update && sudo apt-get install git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
+          gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "sudo apt-get update && sudo apt-get install -y git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBuiltTiles && chmod +x deploy.sh && ./deploy.sh"
 
       - name: Delete Compute Engine Instance
         if: success() # This ensures that the VM is deleted only if the previous steps were successful.
