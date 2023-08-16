@@ -49,7 +49,7 @@ jobs:
 
       - name: SSH and Deploy
         run: |
-          # Wait for the VM to be fully initialized
+          # Wait for the VM to be initialized
           sleep 60
           gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "
             # Update package information
