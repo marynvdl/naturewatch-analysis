@@ -47,7 +47,7 @@ jobs:
           gcloud compute scp --verbosity=debug key.json nw-analysis-vm-built:~/key.json --zone=europe-west9-a
           rm key.json
 
-      - name: SSH and Deploy
+      - name: SSH and Setup Docker
         run: |
           # Wait for the VM to be initialized
           sleep 60
@@ -67,7 +67,11 @@ jobs:
       
             # Allow the current user to run Docker commands without sudo
             sudo usermod -aG docker $USER
-      
+          "
+        
+      - name: SSH and Deploy
+        run: |
+          gcloud compute ssh nw-analysis-vm-built --zone=europe-west9-a --command "
             # Deployment logic
             rm -rf ~/naturewatch-analysis 
             git clone https://github.com/marynvdl/naturewatch-analysis 
