@@ -11,31 +11,23 @@ gcloud auth activate-service-account --key-file=/tmp/keys/key.json
 # Copy all images from gc to local repo
 echo "2. Copying from GC"
 gsutil -m cp gs://nature-watch-bucket/COGS/built/built2022/built2022_13.tif /container/data/input
-echo "gdalinfo built2022_13.tif:"
-gdalinfo /container/data/input/built2022_13.tif
 
 
 # Build a virtual dataset from all input images
 echo "3. Building virtual dataset"
 gdalbuildvrt /container/data/merged.vrt /container/data/input/*.tif
-echo "gdalinfo merged.vrt:"
-gdalinfo /container/data/merged.vrt
 
 # Mask no data values
 echo "4. Mask no data"
 gdal_translate -a_nodata 0 /container/data/merged.vrt /container/data/masked.vrt -of VRT
-echo "gdalinfo masked.vrt:"
-gdalinfo /container/data/masked.vrt
 
 # Apply a color-relief to the merged image
 echo "5. Applying color relief"
 gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colored.vrt -of VRT
-echo "gdalinfo colored.vrt:"
-gdalinfo /container/data/colored.vrt
 
 # Make tiles
 echo "6. Make tiles"
-gdal2tiles.py -z 0-5 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/colored.vrt /container/data/output
+gdal2tiles.py -z 0-6 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/colored.vrt /container/data/output
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
