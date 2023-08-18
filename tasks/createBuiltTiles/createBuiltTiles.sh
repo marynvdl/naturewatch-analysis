@@ -23,7 +23,7 @@ gdal_translate -a_nodata 0 /container/data/merged.vrt /container/data/masked.vrt
 
 # Apply a color-relief to the merged image
 echo "5. Applying color relief"
-gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colored.vrt -of VRT
+gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colored.vrt -of VRT -a_nodata 0
 
 # Make tiles
 echo "6. Make tiles"
