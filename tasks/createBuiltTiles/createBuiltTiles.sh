@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Allow mult-threading in GDAL
-export GDAL_NUM_THREADS=ALL_CPUS
-
 # Make the temporary data directories
 mkdir -p /container/data/input
 mkdir -p /container/data/output
