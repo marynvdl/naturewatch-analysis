@@ -25,14 +25,14 @@ jobs:
         run: |
           set -e
           INSTANCE_NAME="nw-analysis-vm-built"
-          ZONE="europe-west9-a"
+          ZONE="europe-west4-a"
           
           # Check if the instance exists
           if ! gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE > /dev/null 2>&1; then
             echo "Instance does not exist. Creating..."
             gcloud compute instances create $INSTANCE_NAME \
               --zone=$ZONE \
-              --machine-type=e2-standard-8 \
+              --machine-type=e2-standard-4 \
               --image=debian-11-bullseye-v20230629 \
               --image-project=debian-cloud
           else
