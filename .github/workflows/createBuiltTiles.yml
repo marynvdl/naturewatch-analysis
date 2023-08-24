@@ -41,7 +41,11 @@ jobs:
         
       - name: Upload Service Account Key to VM
         run: |
+          set -e
+          INSTANCE_NAME="nw-analysis-vm-built"
+          ZONE="europe-west4-a"        
           cat <<-EOM >key.json
+
           ${{ secrets.GCP_SA_KEY_FORMATTED }}
           EOM
           gcloud compute scp --verbosity=debug key.json nw-analysis-vm-built:~/key.json --zone=$ZONE
@@ -49,6 +53,10 @@ jobs:
 
       - name: SSH and Setup Docker
         run: |
+          set -e
+          INSTANCE_NAME="nw-analysis-vm-built"
+          ZONE="europe-west4-a"
+
           # Wait for the VM to be initialized
           sleep 60
           gcloud compute ssh nw-analysis-vm-built --zone=$ZONE --command "
@@ -71,6 +79,10 @@ jobs:
         
       - name: SSH and Deploy
         run: |
+          set -e
+          INSTANCE_NAME="nw-analysis-vm-built"
+          ZONE="europe-west4-a"
+          
           gcloud compute ssh nw-analysis-vm-built --zone=$ZONE --command "
             # Deployment logic
             rm -rf ~/naturewatch-analysis 
