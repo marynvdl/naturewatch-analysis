@@ -44,7 +44,7 @@ jobs:
           set -e
           INSTANCE_NAME="nw-analysis-vm-built"
           ZONE="europe-west4-a"
-          DISK_SIZE="40GB"
+          DISK_SIZE="100GB"
     
           # Check current disk size
           CURRENT_DISK_SIZE=$(gcloud compute disks describe $INSTANCE_NAME --zone=$ZONE --format="value(sizeGb)")
