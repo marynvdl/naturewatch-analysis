@@ -10,7 +10,7 @@ gcloud auth activate-service-account --key-file=/tmp/keys/key.json
 
 # Copy all images from gc to local repo
 echo "2. Copying from GC"
-gsutil -m cp gs://nature-watch-bucket/COGS/crop/2019/crop2019_15.tif  /container/data/input
+gsutil -m cp gs://nature-watch-bucket/COGS/crop/2019/crop2019_13.tif  /container/data/input
 
 # Build a virtual dataset from all input images
 echo "3. Building virtual dataset"
