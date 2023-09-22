@@ -9,6 +9,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
+    env:
+      INSTANCE_NAME: nw-analysis-vm-crop
+      ZONE: europe-west4-a
+      DISK_SIZE: 400GB
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -24,8 +30,6 @@ jobs:
       - name: Create Compute Engine Instance (if it doesn't exist)
         run: |
           set -e
-          INSTANCE_NAME="nw-analysis-vm-crop"
-          ZONE="europe-west4-a"
           
           # Check if the instance exists
           if ! gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE > /dev/null 2>&1; then
@@ -42,9 +46,6 @@ jobs:
       - name: Resize VM Disk
         run: |
           set -e
-          INSTANCE_NAME="nw-analysis-vm-crop"
-          ZONE="europe-west4-a"
-          DISK_SIZE="100GB"
     
           # Check current disk size
           CURRENT_DISK_SIZE=$(gcloud compute disks describe $INSTANCE_NAME --zone=$ZONE --format="value(sizeGb)")
@@ -58,8 +59,6 @@ jobs:
       - name: Expand File System on VM
         run: |
           set -e
-          INSTANCE_NAME="nw-analysis-vm-crop"
-          ZONE="europe-west4-a"
     
           # Resize the file system to use the available disk space
           gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command "
@@ -69,8 +68,7 @@ jobs:
       - name: Upload Service Account Key to VM
         run: |
           set -e
-          INSTANCE_NAME="nw-analysis-vm-crop"
-          ZONE="europe-west4-a"        
+     
           cat <<-EOM >key.json
 
           ${{ secrets.GCP_SA_KEY_FORMATTED }}
@@ -107,8 +105,6 @@ jobs:
       - name: SSH and Deploy
         run: |
           set -e
-          INSTANCE_NAME="nw-analysis-vm-crop"
-          ZONE="europe-west4-a"
           
           gcloud compute ssh nw-analysis-vm-crop --zone=$ZONE --command "
             # Deployment logic
