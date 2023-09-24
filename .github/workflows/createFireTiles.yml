@@ -1,0 +1,116 @@
+name: Deploy createFireTiles
+
+on:
+  push:
+    paths:
+      - 'tasks/createFireTiles/**'
+      - '.github/workflows/createFireTiles.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      INSTANCE_NAME: nw-analysis-vm-fire
+      ZONE: europe-west4-a
+      DISK_SIZE: 100GB
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Authenticate with GCP
+        uses: google-github-actions/auth@v1.1.1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Create Compute Engine Instance (if it doesn't exist)
+        run: |
+          set -e
+          
+          # Check if the instance exists
+          if ! gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE > /dev/null 2>&1; then
+            echo "Instance does not exist. Creating..."
+            gcloud compute instances create $INSTANCE_NAME \
+              --zone=$ZONE \
+              --machine-type=e2-standard-4 \
+              --image=debian-11-bullseye-v20230629 \
+              --image-project=debian-cloud
+          else
+            echo "Instance already exists. Skipping creation."
+          fi
+
+      - name: Resize VM Disk
+        run: |
+          set -e
+    
+          # Check current disk size
+          CURRENT_DISK_SIZE=$(gcloud compute disks describe $INSTANCE_NAME --zone=$ZONE --format="value(sizeGb)")
+    
+          if [ $CURRENT_DISK_SIZE -lt ${DISK_SIZE%GB} ]; then
+              gcloud compute disks resize $INSTANCE_NAME --zone=$ZONE --size=$DISK_SIZE
+          else
+              echo "Disk size is already $CURRENT_DISK_SIZE GB or greater. Skipping resize."
+          fi
+      
+      - name: Expand File System on VM
+        run: |
+          set -e
+    
+          # Resize the file system to use the available disk space
+          gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command "
+            sudo resize2fs /dev/sda1
+          "
+      
+      - name: Upload Service Account Key to VM
+        run: |
+          set -e
+     
+          cat <<-EOM >key.json
+
+          ${{ secrets.GCP_SA_KEY_FORMATTED }}
+          EOM
+          gcloud compute scp --verbosity=debug key.json nw-analysis-vm-fire:~/key.json --zone=$ZONE
+          rm key.json
+
+      - name: SSH and Setup Docker
+        run: |
+          set -e
+          INSTANCE_NAME="nw-analysis-vm-fire"
+          ZONE="europe-west4-a"
+
+          # Wait for the VM to be initialized
+          sleep 60
+          gcloud compute ssh nw-analysis-vm-fire --zone=$ZONE --command "
+            # Update package information
+            sudo apt-get update
+      
+            # Install Git
+            sudo apt-get install -y git
+      
+            # Install Docker
+            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+            curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+            sudo add-apt-repository 'deb [arch=amd64] https://download.docker.com/linux/debian buster stable'
+            sudo apt-get update
+            sudo apt-get install -y docker-ce
+      
+            # Allow the current user to run Docker commands without sudo
+            sudo usermod -aG docker $USER
+          "
+        
+      - name: SSH and Deploy
+        run: |
+          set -e
+          
+          gcloud compute ssh nw-analysis-vm-fire --zone=$ZONE --command "
+            # Deployment logic
+            rm -rf ~/naturewatch-analysis 
+            git clone https://github.com/marynvdl/naturewatch-analysis 
+            cd ~/naturewatch-analysis/tasks/createFireTiles 
+            chmod +x deploy.sh 
+            ./deploy.sh
+          "
