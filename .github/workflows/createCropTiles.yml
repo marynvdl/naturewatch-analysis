@@ -13,7 +13,7 @@ jobs:
     env:
       INSTANCE_NAME: nw-analysis-vm-crop
       ZONE: europe-west4-a
-      DISK_SIZE: 400GB
+      DISK_SIZE: 200GB
 
     steps:
       - name: Checkout code
