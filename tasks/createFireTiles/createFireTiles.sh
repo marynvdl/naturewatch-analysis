@@ -26,7 +26,7 @@ gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colo
 
 # Make tiles
 echo "6. Make tiles"
-gdal2tiles.py -z 0-2 -s EPSG:4326 -r bilinear -w none -a 0 --xyz /container/data/colored.tif /container/data/output
+gdal2tiles.py -z 0-8 -s EPSG:4326 -r bilinear -w none -a 0 --xyz /container/data/colored.tif /container/data/output
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
