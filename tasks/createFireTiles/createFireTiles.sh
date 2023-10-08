@@ -30,7 +30,7 @@ gdal2tiles.py -z 0-12 -s EPSG:4326 -r lanczos -w none -a 0 --xyz /container/data
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
-gsutil -m cp -r /container/data/output/* gs://nature-watch-tiles/fire/2022test
+gsutil -m cp -r /container/data/output/* gs://nature-watch-tiles/fire/2022
 
 # Delete temporary data
 rm -r /container/data/*
