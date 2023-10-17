@@ -17,7 +17,7 @@ echo "3. Create and run docker container"
 echo "Checking if ~/key.json exists..."
 ls -la ~/
 
-docker build --no-cache -t create-fire-tiles:1.0.8 .
-docker run -v ~/key.json:/tmp/keys/key.json -v ~/vm_data:/container/data -d --name create-fire-tiles create-fire-tiles:1.0.8
+docker build --no-cache -t create-fire-tiles:1.0.9 .
+docker run -v ~/key.json:/tmp/keys/key.json -v ~/vm_data:/container/data -d --name create-fire-tiles create-fire-tiles:1.0.9
 
 echo "4. Done with deploy.sh"
