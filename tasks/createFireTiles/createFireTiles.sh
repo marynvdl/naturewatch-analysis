@@ -26,11 +26,11 @@ gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colo
 
 # Make tiles
 echo "6. Make tiles"
-gdal2tiles.py -z 0-5 -s EPSG:4326 -r med -w none -a 0 --xyz /container/data/colored.tif /container/data/output
+gdal2tiles.py -z 0-5 -s EPSG:4326 -r near -w none -a 0 --xyz /container/data/colored.tif /container/data/output
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
-gsutil -m cp -r /container/data/output/* gs://nature-watch-tiles/fire/2022ave
+gsutil -m cp -r /container/data/output/* gs://nature-watch-tiles/fire/2022bins
 
 # Delete temporary data
 rm -r /container/data/*
