@@ -13,7 +13,7 @@ jobs:
     env:
       INSTANCE_NAME: nw-analysis-vm-fire
       ZONE: europe-west4-a
-      DISK_SIZE: 40GB
+      DISK_SIZE: 20GB
 
     steps:
       - name: Checkout code
