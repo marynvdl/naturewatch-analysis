@@ -80,7 +80,7 @@ jobs:
         run: |
           set -e
           INSTANCE_NAME="nw-analysis-vm-fire"
-          ZONE="europe-west4-a"
+          ZONE=$ZONE
 
           # Wait for the VM to be initialized
           sleep 60
