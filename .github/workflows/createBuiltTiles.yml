@@ -13,7 +13,7 @@ jobs:
     env:
       INSTANCE_NAME: nw-analysis-vm-built
       ZONE: europe-west4-a
-      DISK_SIZE: 10GB
+      DISK_SIZE: 100GB
 
     steps:
       - name: Checkout code
