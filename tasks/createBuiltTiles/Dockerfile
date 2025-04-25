@@ -1,5 +1,5 @@
 # Use an existing docker image as a base
-FROM osgeo/gdal:ubuntu-small-latest
+FROM osgeo/gdal:ubuntu-small-3.6.3
 
 # Update the package list
 RUN apt-get update -y

@@ -28,7 +28,9 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Create Compute Engine Instance (if it doesn't exist)
-        run: |          
+        run: |
+          set -e
+          
           # Check if the instance exists
           if ! gcloud compute instances describe $INSTANCE_NAME --zone=$ZONE > /dev/null 2>&1; then
             echo "Instance does not exist. Creating..."
@@ -42,7 +44,9 @@ jobs:
           fi
 
       - name: Resize VM Disk
-        run: |    
+        run: |
+          set -e
+
           # Check current disk size
           CURRENT_DISK_SIZE=$(gcloud compute disks describe $INSTANCE_NAME --zone=$ZONE --format="value(sizeGb)")
     
@@ -53,7 +57,9 @@ jobs:
           fi
       
       - name: Expand File System on VM
-        run: |    
+        run: |
+          set -e
+
           # Resize the file system to use the available disk space
           gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command "
             sudo resize2fs /dev/sda1
@@ -61,6 +67,8 @@ jobs:
       
       - name: Upload Service Account Key to VM
         run: |
+          set -e
+
           cat <<-EOM >key.json
 
           ${{ secrets.GCP_SA_KEY_FORMATTED }}
@@ -70,6 +78,8 @@ jobs:
 
       - name: SSH and Setup Docker
         run: |
+          set -e
+
           # Wait for the VM to be initialized
           sleep 60
           gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command "
@@ -91,7 +101,9 @@ jobs:
           "
         
       - name: SSH and Deploy
-        run: |         
+        run: |
+          set -e
+
           gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command "
             # Deployment logic
             rm -rf ~/naturewatch-analysis 
