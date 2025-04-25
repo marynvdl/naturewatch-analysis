@@ -1,7 +1,7 @@
 # naturewatch-analysis
 Shell scripts using gdal and docker to create raster tiles to be served in the naturewatch-app.
 
-For each type (i.e. fire, built, bare) there is a task folder inside `tasks`. There's also a corresponding `yml` firle in `.github/workflows` which triggers a GitHub Action when changes are made to either the yml file or when a file inside the `tasks` folder is changed.
+For each type (i.e. fire, built, bare) there is a task folder inside `tasks`. There's also a corresponding `yml` file in `.github/workflows` which triggers a GitHub Action when changes are made to either the yml file or when a file inside the `tasks` folder is changed.
 
 ## Creating tiles for a new year
 Using the example of fire for 2023:
