@@ -10,7 +10,8 @@ gcloud auth activate-service-account --key-file=/tmp/keys/key.json
 
 # Copy all images from gc to local repo
 echo "2. Copying from GC"
-gsutil -m cp gs://nature-watch-bucket/COGS/built_v1/2023/*  /container/data/input
+# gsutil -m cp gs://nature-watch-bucket/COGS/built_v1/2023/*  /container/data/input
+gsutil -m cp gs://nature-watch-bucket/COGS/built_v1/2023/built2023_124.tif  /container/data/input
 
 # Build a virtual dataset from all input images
 echo "3. Building virtual dataset"
@@ -26,7 +27,8 @@ gdaldem color-relief /container/data/masked.vrt ./color.txt /container/data/colo
 
 # Make tiles
 echo "6. Make tiles"
-gdal2tiles.py -z 0-12 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/colored.tif /container/data/output
+# gdal2tiles.py -z 0-12 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/colored.tif /container/data/output
+gdal2tiles.py -z 0-5 -s EPSG:4326 -r max -w none -a 0 --xyz /container/data/colored.tif /container/data/output
 
 # Copy local tiles to gc
 echo "7. Upload to GC"
