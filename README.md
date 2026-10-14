@@ -1,12 +1,23 @@
 # naturewatch-analysis
 Shell scripts using gdal and docker to create raster tiles to be served in the naturewatch-app.
 
-For each type (i.e. fire, built, bare) there is a task folder inside `tasks`. There's also a corresponding `yml` file in `.github/workflows` which triggers a GitHub Action when changes are made to either the yml file or when a file inside the `tasks` folder is changed.
+For each type (i.e. fire, built, bare) there is a task folder inside `tasks`.
 
-## Creating tiles for a new year
-Using the example of fire for 2023:
-1. Create the fire tiff images using Google Earth Engine script named `fire_exportFirms.ipynb` to write into `gs://nature-watch-bucket/COGS/fire/2023/*`
-2. In this repo, update the year in `createFireTiles/createFireTiles.sh` (there are two places to update)
-3. Update the tag number in `createFireTiles/deploy.sh` i.e. create-fire-tiles:1.1.1 (there are two places to update)
-4. When you commit changes to GitHub, a GitHub Action workflow is triggered, that starts a VM in Google Cloud, starts up a Docker, runs the code and finally create the tiles in `gs://nature-watch-tiles/fire/2023`
-5. There will now be a Compute Engine created on Google Cloud. You can install the ops agent for better statistics on available storage spcae. You can also ssh into the machine and run this `sudo docker logs -f create-fire-tiles`
+- **Fire** runs on a GitHub-hosted runner, started by hand from the Actions tab (see below). No VM.
+- **Built, bare and crop** still use the older approach: a `yml` file in `.github/workflows` starts a VM in Google Cloud whenever a file in their `tasks` folder changes. That VM is not switched off afterwards, so switch it off in Google Cloud when the run is done. These should move to the fire approach.
+
+## Creating fire tiles for a new year
+Using the example of fire for 2025:
+1. Create the fire tiff images with Google Earth Engine (`fire_exportFirms.ipynb`) so that they land in `gs://nature-watch-bucket/COGS/fire/2025/*`
+2. In GitHub go to **Actions -> Fire tiles -> Run workflow**, enter the year, and leave **dry run** off. Tick **dry run** to build and check the tiles without uploading them.
+3. The workflow downloads the COGs, builds the tiles with GDAL in a pinned container, and uploads them to `gs://nature-watch-tiles/fire/2025/`. It takes a few minutes.
+4. Add the year to the fire layer in the naturewatch-app (`frontend/naturewatch/src/catalog/layers.json`).
+
+Pull requests that change `tasks/fireTiles/` or the workflow do a dry run automatically.
+
+### How the fire tiles are built
+`tasks/fireTiles/build_tiles.sh <cog_dir> <work_dir> [max_zoom]` does the work and can be run on a laptop with GDAL installed. It makes zoom 0-9 only.
+
+The fire counts are aggregated to a 1 km grid in the GEE export, so the 30 m COGs hold far more pixels than information. The script resamples to that 1 km grid (GDAL reads the COG overviews), colours it with `color.txt`, and cuts tiles. Zoom 9 is about 300 m per pixel, which is already finer than the data. The app sets `maxzoom: 9` and `resampling: nearest` for the fire layer in its layer catalog, so it enlarges the last level itself. This makes about 25,000 tiles per year instead of about 1.6 million.
+
+Needed once: the `GCP_SA_KEY` secret must belong to a service account that can read `nature-watch-bucket` and write to `nature-watch-tiles`.
