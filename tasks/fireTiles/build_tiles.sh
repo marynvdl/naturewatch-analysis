@@ -23,6 +23,12 @@ MAX_ZOOM="${3:-9}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLOR_FILE="${COLOR_FILE:-$HERE/color.txt}"
 
+# Absolute paths: the script changes into WORK_DIR below
+[ -d "$COG_DIR" ] || { echo "ERROR: $COG_DIR is not a directory" >&2; exit 1; }
+COG_DIR="$(cd "$COG_DIR" && pwd)"
+mkdir -p "$WORK_DIR"
+WORK_DIR="$(cd "$WORK_DIR" && pwd)"
+
 shopt -s nullglob
 COGS=("$COG_DIR"/*.tif)
 if [ "${#COGS[@]}" -eq 0 ]; then
@@ -30,12 +36,13 @@ if [ "${#COGS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 rm -rf tiles merged.vrt fire_1km.tif fire_colored.tif
 
 echo "1. Virtual mosaic of ${#COGS[@]} COGs"
-gdalbuildvrt -q merged.vrt "${COGS[@]}"
+# -strict makes GDAL fail on a file it cannot open instead of skipping it,
+# which would leave a hole in the map.
+gdalbuildvrt -q -strict merged.vrt "${COGS[@]}"
 
 echo "2. Resample to the native 1 km grid in Web Mercator"
 # Do not set a nodata value here: 0 is a real value (no fire) and is made
