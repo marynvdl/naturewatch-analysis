@@ -73,6 +73,27 @@ def test_blocks_are_15_degree_squares_that_tile_without_gaps():
     assert b[1]["right"] == pytest.approx(b[4]["left"])
 
 
+def test_block_region_has_straight_edges(monkeypatch):
+    # Regression: with Earth Engine's default (geodesic) edges the exported file was
+    # about 0.24 degrees taller than the block. Planar edges match the notebook.
+    import sys
+    import types
+
+    calls = []
+
+    class FakeGeometry:
+        def __init__(self, *args):
+            calls.append(args)
+
+    monkeypatch.setitem(sys.modules, "ee", types.SimpleNamespace(Geometry=FakeGeometry))
+    block = ef.load_blocks()[0]
+    ef.block_region(block)
+    geojson, crs, geodesic = calls[0]
+    assert geojson == block.feature["geometry"]
+    assert crs == "EPSG:4326"
+    assert geodesic is False
+
+
 def test_block_selection():
     blocks = ef.load_blocks()
     assert [b.id for b in ef.parse_block_selection("3,7-9", blocks)] == [3, 7, 8, 9]

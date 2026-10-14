@@ -178,6 +178,19 @@ def init_earth_engine(project: str | None = None) -> None:
         ee.Initialize(project=project)
 
 
+def block_region(block: Block):
+    """The export region of a block, with straight (planar) edges.
+
+    Earth Engine draws the edges of a polygon from GeoJSON as great-circle arcs
+    unless told otherwise. On a 15 degree wide block those arcs bulge towards the
+    pole, which made the exported file about 0.24 degrees (26 km) taller than the
+    block. The notebook's exports had straight edges, so do the same.
+    """
+    import ee
+
+    return ee.Geometry(block.feature["geometry"], "EPSG:4326", False)
+
+
 def build_fire_image(year: int):
     """Burn count per pixel for the year, as a byte image on a 1 km Web Mercator grid.
 
@@ -304,7 +317,7 @@ def cmd_export(args) -> int:
     fire = build_fire_image(args.year)
     started = []
     for block in todo:
-        region = ee.Feature(block.feature).geometry()
+        region = block_region(block)
         task = ee.batch.Export.image.toCloudStorage(
             image=fire, region=region, **export_settings(args.year, block, args.bucket, args.prefix)
         )
