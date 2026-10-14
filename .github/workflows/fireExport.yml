@@ -1,0 +1,130 @@
+name: Fire export
+
+# Starts the Google Earth Engine export of the fire counts for one year, using
+# gee/fire/export_fire.py. The COGs land in gs://nature-watch-bucket/COGS/fire/<year>/.
+#
+# The export itself runs inside Earth Engine and takes a few hours. This workflow
+# only starts it (a minute), so run "status" later to follow it, and run
+# "Fire tiles" once every block is COMPLETED.
+#
+# Run it from the Actions tab: "Fire export" -> "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: Year, e.g. 2025
+        required: true
+        type: string
+      action:
+        description: What to do
+        required: true
+        type: choice
+        default: check
+        options:
+          - check            # log in to Earth Engine, check FIRMS covers the year, test the calculation
+          - export-dry-run   # show what an export would do, start nothing
+          - export           # start the export tasks
+          - status           # show the state of the export tasks
+      blocks:
+        description: Only these block ids, e.g. 3,7-9 (empty = all 25)
+        required: false
+        type: string
+        default: ''
+      prefix:
+        description: Folder in nature-watch-bucket for the COGs. Leave as is, except to test
+        required: false
+        type: string
+        default: COGS/fire
+      overwrite:
+        description: Also export blocks whose file already exists
+        required: true
+        type: boolean
+        default: false
+  # Pull requests that change the export run the tests, the plan and a login check.
+  # They never start an export.
+  pull_request:
+    paths:
+      - 'gee/**'
+      - '.github/workflows/fireExport.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fire-export-${{ inputs.year || 'pull-request' }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Passed through env, never put into the shell script text
+      YEAR: ${{ inputs.year || '2025' }}
+      ACTION: ${{ inputs.action || 'check' }}
+      BLOCKS: ${{ inputs.blocks }}
+      PREFIX: ${{ inputs.prefix || 'COGS/fire' }}
+      OVERWRITE: ${{ inputs.overwrite }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - name: Check the inputs
+        run: |
+          if ! [[ "$YEAR" =~ ^20[0-9]{2}$ ]]; then
+            echo "year must look like 2025, got: $YEAR" >&2; exit 1
+          fi
+          if ! [[ "$BLOCKS" =~ ^[0-9,-]*$ ]]; then
+            echo "blocks must look like 3,7-9, got: $BLOCKS" >&2; exit 1
+          fi
+          if ! [[ "$PREFIX" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$ ]]; then
+            echo "prefix must look like COGS/fire, got: $PREFIX" >&2; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: gee/requirements.txt
+
+      - name: Install
+        run: pip install -r gee/requirements.txt pytest pandas
+
+      - name: Tests
+        run: python -m pytest -q gee/fire
+
+      - name: Show the plan
+        working-directory: gee/fire
+        run: python export_fire.py plan --year "$YEAR" --prefix "$PREFIX" ${BLOCKS:+--blocks "$BLOCKS"}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # On pull requests this only reports whether the service account can use
+      # Earth Engine; it must not fail the pull request.
+      - name: Check Earth Engine
+        if: env.ACTION == 'check'
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        working-directory: gee/fire
+        run: python export_fire.py check --year "$YEAR" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Export dry run
+        if: env.ACTION == 'export-dry-run'
+        working-directory: gee/fire
+        run: python export_fire.py export --year "$YEAR" --prefix "$PREFIX" --dry-run ${BLOCKS:+--blocks "$BLOCKS"}
+
+      - name: Start the export
+        if: env.ACTION == 'export' && github.event_name == 'workflow_dispatch'
+        working-directory: gee/fire
+        run: |
+          ARGS=()
+          if [ -n "$BLOCKS" ]; then ARGS+=(--blocks "$BLOCKS"); fi
+          if [ "$OVERWRITE" = "true" ]; then ARGS+=(--overwrite); fi
+          python export_fire.py export --year "$YEAR" --prefix "$PREFIX" "${ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Export status
+        if: env.ACTION == 'status'
+        working-directory: gee/fire
+        run: python export_fire.py status --year "$YEAR" | tee -a "$GITHUB_STEP_SUMMARY"
