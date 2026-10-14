@@ -51,8 +51,11 @@ So a new year is comparable with 2016-2024, the calculation is unchanged, includ
 
 If you fix either, fix it for every year at once, or the years stop being comparable.
 
-### Not tested here
-Everything except the Earth Engine calls is covered by the tests (date windows, block ids, file names, export settings, the command line). The Earth Engine part can only be tested with a login; the `check` action runs it against a small area for that reason.
+### How it was checked
+- The tests cover everything that needs no login: date windows (also against `pandas.date_range`), block ids, file names, export settings, the region edges, and the command line.
+- The Earth Engine part was checked by re-exporting blocks 1 and 14 of **2024** to a test folder (`prefix` input, `COGS/fire-test`) and comparing them with the files the notebook made in 2025. Both have the same size and geotransform, and all 3.1 billion pixels of each are identical, including counts up to 27 in block 14.
+- That comparison found one bug, now fixed: Earth Engine draws polygon edges as great-circle arcs unless told otherwise, which made the first attempt 0.24 degrees taller than the block. `block_region` uses straight edges.
+- Later years use the same FIRMS dataset, but FIRMS is sometimes reprocessed, so re-exporting an old year can differ from what was exported then.
 
 ### Next
 - Global coverage, not only Africa.
