@@ -1,0 +1,14 @@
+---
+description: Sooty Earth pipeline work follows the app roadmap. The old tile virtual-machine workflows are retired and must not be restored.
+alwaysApply: true
+---
+
+# Sooty Earth pipelines
+
+Read `docs/sooty-earth-roadmap.md` in `marynvdl/naturewatch-app` before pipeline work. When the clones are siblings, that file is `../naturewatch-app/docs/sooty-earth-roadmap.md`.
+
+Do not open or merge a pull request from `develop` into `main` in the app repo until a production release is explicitly requested.
+
+The crop, built, and bare virtual-machine tasks are retired. Their folders are in `archive/vm-tile-tasks/`, and their workflows do not start a machine. `tasks/fireTiles/` is the live fire task and does not start one. Do not push a commit that restores the old virtual-machine workflows: GitHub runs the workflow in the commit you push. New pipeline code lives outside `tasks/` until a workflow is added on purpose and started by hand.
+
+One roadmap step per branch and chat. Do not start the next step until the current step's done-when is met.
