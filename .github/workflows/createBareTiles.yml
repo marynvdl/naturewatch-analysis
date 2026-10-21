@@ -1,40 +1,18 @@
-name: Deploy createBareTiles
+name: Retired createBareTiles
 
+# Retired. A push of tasks/createBareTiles used to start an existing
+# Compute Engine virtual machine and run the task there. Nothing here
+# creates or starts a machine. Running this by hand only records that.
 on:
-  push:
-    paths:
-      - 'tasks/createBareTiles/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  deploy:
+  retired:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
-    
-      - name: Authenticate with GCP
-        uses: google-github-actions/auth@v1.1.1
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Check if instance is running
-        id: check-instance
-        run: |
-          STATUS=$(gcloud compute instances describe nw-analysis-vm1 --zone europe-west9-a --format='get(status)')
-          if [[ "$STATUS" == "RUNNING" ]]; then
-            echo "::set-output name=instance_running::true"
-          else
-            echo "::set-output name=instance_running::false"
-          fi
-
-      - name: Start Compute Engine Instance
-        if: steps.check-instance.outputs.instance_running != 'true'
-        run: |
-          gcloud compute instances start nw-analysis-vm1 --zone europe-west9-a
-
-      - name: SSH and Deploy
-        run: |
-          gcloud compute ssh nw-analysis-vm1 --zone europe-west9-a --command "sudo apt-get update && sudo apt-get install git && rm -rf ~/naturewatch-analysis && git clone https://github.com/marynvdl/naturewatch-analysis && cd ~/naturewatch-analysis/tasks/createBareTiles && chmod +x deploy.sh && ./deploy.sh"
+      - name: Retired
+        run: echo "createBareTiles is retired. This run does not create or start a virtual machine." | tee -a "$GITHUB_STEP_SUMMARY"
