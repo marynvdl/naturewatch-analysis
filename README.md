@@ -1,10 +1,9 @@
 # naturewatch-analysis
 Shell scripts using gdal and docker to create raster tiles to be served in the naturewatch-app.
 
-For each type (i.e. fire, built, bare) there is a task folder inside `tasks`.
+The live task is fire, in `tasks/fireTiles`. It runs on a GitHub-hosted runner, started by hand from the Actions tab (see below). There is no virtual machine.
 
-- **Fire** runs on a GitHub-hosted runner, started by hand from the Actions tab (see below). No VM.
-- **Built, bare and crop** still use the older approach: a `yml` file in `.github/workflows` starts a VM in Google Cloud whenever a file in their `tasks` folder changes. That VM is not switched off afterwards, so switch it off in Google Cloud when the run is done. These should move to the fire approach.
+Built, bare, and crop used to start a Compute Engine virtual machine on push. Those workflows are retired, and the task folders are in `archive/vm-tile-tasks/`.
 
 ## Creating fire tiles for a new year
 Using the example of fire for 2025:
