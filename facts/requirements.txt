@@ -1,0 +1,4 @@
+exactextract==0.3.0
+pyproj>=3.6
+shapely>=2
+psycopg[binary]>=3.2
