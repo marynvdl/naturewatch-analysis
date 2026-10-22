@@ -47,6 +47,8 @@ sprout:
     not_cropland: 0
     nodata: 255
   outside_extent: nodata
+  # 255 is the clip's nodata, not a GLAD code. It stays nodata in the sprout.
   from_seed:
     0: 0
     100: 1
+    255: 255

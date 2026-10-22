@@ -53,4 +53,4 @@ def test_recipe_names_the_seed_and_the_sprout_raster():
     assert recipe["seed"]["clip"]["boundary"]["name"] == "geoBoundaries ZAF ADM0"
     assert recipe["sprout"]["values"] == {"cropland": 1, "not_cropland": 0, "nodata": 255}
     assert recipe["sprout"]["outside_extent"] == "nodata"
-    assert recipe["sprout"]["from_seed"] == {0: 0, 100: 1}
+    assert recipe["sprout"]["from_seed"] == {0: 0, 100: 1, 255: 255}

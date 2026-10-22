@@ -32,7 +32,7 @@ Read one sample before the bulk download. The sample is the smallest piece the p
 
 `recipes/cropland-2024.yaml` names the GLAD annual cropland 2024 seed and the South Africa sprout. The seed tiles are the six 10° files whose cells meet mainland South Africa. A `.keep` object in each prefix marks the folder. It is not a raster. The seed step copies the tile names in the recipe, and the clip named beside them, into the seed prefix.
 
-The sprout file is named now and written in a later step. Its classes are 1 for cropland, 0 for other land, and 255 for nodata, including land outside South Africa. Seed value 100 is cropland and maps to sprout value 1. Seed value 0 is everything else and maps to sprout value 0. The source tiles set no nodata value. `seed/cropland.py` downloads the tiles, checks them, and writes a mainland South Africa clip under the seed path. Pixels outside that boundary are 255 in the clip. That 255 is not a GLAD code.
+`sprout/cropland.py` writes the sprout file from the seed clip. Its classes are 1 for cropland, 0 for other land, and 255 for nodata, including land outside South Africa. Seed value 100 is cropland and maps to sprout value 1. Seed value 0 is everything else and maps to sprout value 0. Clip value 255 is nodata and stays 255. The source tiles set no nodata value. `seed/cropland.py` downloads the tiles, checks them, and writes a mainland South Africa clip under the seed path. Pixels outside that boundary are 255 in the clip. That 255 is not a GLAD code.
 
 ## Checks
 
