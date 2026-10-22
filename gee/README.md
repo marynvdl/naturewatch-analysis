@@ -26,6 +26,15 @@ For one calendar year it counts, per pixel, in how many 14-day windows NASA FIRM
 
 When every block is `COMPLETED`, run **Fire tiles** for the same year. Use the `blocks` input (for example `3,7-9`) to re-run only some blocks.
 
+### Tiles
+`tasks/fireTiles/build_tiles.sh <cog_dir> <work_dir> [max_zoom]` builds the map tiles and can be run on a laptop with GDAL installed. It makes zoom 0–9 only.
+
+The counts are already on a 1 km grid, so the 30 m COGs hold far more pixels than information. The script resamples to that 1 km grid, colours it with `color.txt`, and cuts tiles. Zoom 9 is about 300 m per pixel, which is already finer than the data. The app sets `maxzoom: 9` and `resampling: nearest` for the fire layer, so it enlarges the last level itself. This makes about 25,000 tiles per year instead of about 1.6 million.
+
+The workflow downloads the COGs, builds the tiles in a pinned GDAL container, and uploads them to `gs://nature-watch-tiles/fire/<year>/`. Pull requests that change `tasks/fireTiles/` or the workflow do a dry run. Adding the year to the map is a change in the app catalogue, `frontend/naturewatch/src/catalog/layers.json`.
+
+The `GCP_SA_KEY` secret must belong to a service account that can read `nature-watch-bucket` and write to `nature-watch-tiles`.
+
 ### Run it on a laptop
 ```
 pip install -r gee/requirements.txt
@@ -46,7 +55,7 @@ The Google Cloud project of the service account (the `GCP_SA_KEY` secret) must b
 
 ### Same calculation as the notebook, on purpose
 So a new year is comparable with 2016-2024, the calculation is unchanged, including two quirks:
-- **27 windows, not 26.** The 14-day windows start on 1 January and every 14 days up to 31 December, which gives 27 starts. The last one is only 1-2 days inside the year, so a pixel can count up to 27 (about 940 pixels reach 27 in 2024). The map's legend text says the maximum is 26.
+- **27 windows, not 26.** The 14-day windows start on 1 January and every 14 days up to 31 December, which gives 27 starts. The last one is only 1-2 days inside the year, so a pixel can count up to 27 (about 940 pixels reach 27 in 2024). The map legend says the count can reach 27.
 - **The last window runs into January.** Every window is 14 days long, so the one starting on 30/31 December also counts detections up to about 13 January of the next year.
 
 If you fix either, fix it for every year at once, or the years stop being comparable.

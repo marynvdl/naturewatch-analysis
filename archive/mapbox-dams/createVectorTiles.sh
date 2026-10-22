@@ -7,7 +7,7 @@ export MAPBOX_ACCESS_TOKEN=####
 tilesets upload-source nature-watch dams-test-source ./data/vector/dams.geojson.ld
 
 # Create a new tileset
-tilesets create nature-watch.dam-test-tiles --recipe ./mapbox_recipes/damsRecipe.json --name "Dams test"
+tilesets create nature-watch.dam-test-tiles --recipe ./damsRecipe.json --name "Dams test"
 
 # Publish tileset
 tilesets publish nature-watch.dam-test-tiles

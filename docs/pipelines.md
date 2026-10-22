@@ -17,7 +17,7 @@ The same table belongs in the app blueprint.
 | The first Sooty Earth release plan                                              | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/sooty-earth-roadmap.md) `docs/sooty-earth-roadmap.md`                                                 |
 | How a dataset becomes published objects                                         | This file                                                                                                                                                                             |
 | The hand-edited layer catalog                                                   | [`cookbook/recipes/`](../cookbook/recipes/)                                                                                                                                           |
-| How to run a step, and what that run cost                                       | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`gee/README.md`](../gee/README.md), [`tasks/fireTiles/`](../tasks/fireTiles/) |
+| How to run a step, and what that run cost                                       | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`gee/README.md`](../gee/README.md) |
 
 ## Data path
 
@@ -67,7 +67,7 @@ There is no pipeline orchestrator in this release. Each job is started by hand. 
 | Tiles       | Builds map tiles from the sprout raster and writes them to public `nature-watch-tiles`. Colour is applied in the client.                                                                                  | Fire does this today, from `tasks/fireTiles`, started by hand on a GitHub runner. Cropland tiles are a later step.                                   |
 | Tiles store | Public bucket `nature-watch-tiles`.                                                                                                                                                                       | Fire tiles are `fire/<year>/{z}/{x}/{y}.png`. The 2015 and 2019 crop tiles stay at `crop/`.                                                          |
 
-The crop, built, and bare virtual-machine tasks are retired. Their folders are in `archive/vm-tile-tasks/`. Their workflows do not start a machine.
+The crop, built, and bare virtual-machine tasks are retired. Their folders and workflow files are in `archive/vm-tile-tasks/`. Those workflows are not in `.github/workflows/`, and they do not start a machine. The dams Mapbox recipe is in `archive/mapbox-dams/`. The map still reads the existing tileset.
 
 ## Fetch
 
