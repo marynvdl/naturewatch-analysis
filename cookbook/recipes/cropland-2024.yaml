@@ -25,11 +25,20 @@ seed:
     - 30S_010E.tif
     - 30S_020E.tif
     - 30S_030E.tif
-  # GLAD documents 100 as cropland presence. Other codes wait for one tile.
+  # Opened 20S_020E.tif on 22 October 2026. Every pixel is 0 or 100.
+  # The file sets no nodata value. 0 is everything that is not cropland.
   values:
     cropland: 100
-    other: confirm-from-one-tile
-    nodata: confirm-from-one-tile
+    other: 0
+    nodata: null
+  # Mainland South Africa, source codes inside the boundary. 255 is not a GLAD code.
+  clip:
+    file: cropland-glad-2024-zaf.tif
+    nodata: 255
+    boundary:
+      name: geoBoundaries ZAF ADM0
+      year_represented: 2020
+      url: https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/ZAF/ADM0/geoBoundaries-ZAF-ADM0.geojson
 sprout:
   id: sprout-cropland-2024-v1
   path: gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif
@@ -39,4 +48,5 @@ sprout:
     nodata: 255
   outside_extent: nodata
   from_seed:
+    0: 0
     100: 1
