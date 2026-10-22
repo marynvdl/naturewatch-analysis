@@ -54,3 +54,10 @@ def test_recipe_names_the_seed_and_the_sprout_raster():
     assert recipe["sprout"]["values"] == {"cropland": 1, "not_cropland": 0, "nodata": 255}
     assert recipe["sprout"]["outside_extent"] == "nodata"
     assert recipe["sprout"]["from_seed"] == {0: 0, 100: 1, 255: 255}
+    assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/cropland/2024/v1/"
+    assert recipe["tiles"]["min_zoom"] == 0
+    assert recipe["tiles"]["max_zoom"] == 12
+    assert recipe["tiles"]["scheme"] == "xyz"
+    assert recipe["tiles"]["tile_size"] == 256
+    assert recipe["tiles"]["resampling"] == "max"
+    assert recipe["tiles"]["encoding"] == "class-value"
