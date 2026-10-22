@@ -1,0 +1,42 @@
+# Hand-edited catalog for one layer year.
+# Facts and tiles read sprout.path. That object is the published raster.
+# Step 4 writes the static STAC files in the same v1/ prefix.
+id: cropland-2024
+title: GLAD annual cropland 2024, South Africa
+source:
+  name: GLAD annual cropland
+  url: https://glad.umd.edu/dataset/annual-croplands
+  download: https://glad.umd.edu/datasets/annual-croplands/2024/
+  citation: "Khan et al. 2026, https://doi.org/10.1016/j.rse.2026.115438"
+year: 2024
+extent: south-africa
+grid:
+  crs: EPSG:4326
+  pixel_size_deg: 0.00025
+  dtype: uint8
+seed:
+  id: seed-cropland-glad-2024-v1
+  path: gs://nature-watch-bucket/seeds/cropland/glad/2024/v1/
+  # 10° tiles whose cells meet mainland South Africa. Names are GLAD's.
+  tiles:
+    - 20S_010E.tif
+    - 20S_020E.tif
+    - 20S_030E.tif
+    - 30S_010E.tif
+    - 30S_020E.tif
+    - 30S_030E.tif
+  # GLAD documents 100 as cropland presence. Other codes wait for one tile.
+  values:
+    cropland: 100
+    other: confirm-from-one-tile
+    nodata: confirm-from-one-tile
+sprout:
+  id: sprout-cropland-2024-v1
+  path: gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif
+  values:
+    cropland: 1
+    not_cropland: 0
+    nodata: 255
+  outside_extent: nodata
+  from_seed:
+    100: 1

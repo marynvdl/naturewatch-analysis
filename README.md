@@ -3,6 +3,8 @@ Shell scripts using gdal and docker to create raster tiles to be served in the n
 
 The live task is fire, in `tasks/fireTiles`. It runs on a GitHub-hosted runner, started by hand from the Actions tab (see below). There is no virtual machine.
 
+Sooty Earth layer recipes live in `cookbook/recipes/`. That folder is the catalog edited by hand. `gs://nature-watch-bucket` is private; map tiles stay on `gs://nature-watch-tiles`. See `cookbook/README.md`.
+
 Built, bare, and crop used to start a Compute Engine virtual machine on push. Those workflows are retired, and the task folders are in `archive/vm-tile-tasks/`.
 
 ## Creating fire tiles for a new year
