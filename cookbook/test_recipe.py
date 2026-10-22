@@ -46,8 +46,11 @@ def test_recipe_names_the_seed_and_the_sprout_raster():
     assert recipe["grid"]["pixel_size_deg"] == 0.00025
     assert recipe["grid"]["dtype"] == "uint8"
     assert recipe["seed"]["values"]["cropland"] == 100
-    assert recipe["seed"]["values"]["other"] == "confirm-from-one-tile"
-    assert recipe["seed"]["values"]["nodata"] == "confirm-from-one-tile"
+    assert recipe["seed"]["values"]["other"] == 0
+    assert recipe["seed"]["values"]["nodata"] is None
+    assert recipe["seed"]["clip"]["file"] == "cropland-glad-2024-zaf.tif"
+    assert recipe["seed"]["clip"]["nodata"] == 255
+    assert recipe["seed"]["clip"]["boundary"]["name"] == "geoBoundaries ZAF ADM0"
     assert recipe["sprout"]["values"] == {"cropland": 1, "not_cropland": 0, "nodata": 255}
     assert recipe["sprout"]["outside_extent"] == "nodata"
-    assert recipe["sprout"]["from_seed"] == {100: 1}
+    assert recipe["sprout"]["from_seed"] == {0: 0, 100: 1}
