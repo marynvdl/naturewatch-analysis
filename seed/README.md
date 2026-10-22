@@ -1,5 +1,7 @@
 # Seed
 
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the cropland 2024 run.
+
 Downloads the GLAD annual cropland tiles named in a cookbook recipe, checks them, and writes a mainland South Africa clip under the recipe's seed path.
 
 The recipe is the catalog. This script reads it and does not edit it. Open one tile with `sample` and record its source codes in the recipe before `run` downloads the rest.

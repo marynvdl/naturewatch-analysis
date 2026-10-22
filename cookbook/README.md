@@ -1,6 +1,6 @@
 # Cookbook
 
-Recipes for Sooty Earth layers. `recipes/` is the only catalog edited by hand. Later steps read a recipe. They do not grow a second inventory.
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). Recipes for Sooty Earth layers. `recipes/` is the only catalog edited by hand. Later steps read a recipe. They do not grow a second inventory.
 
 Fire exports stay at `gs://nature-watch-bucket/COGS/fire/`. The 2015 and 2019 crop tiles stay at `gs://nature-watch-tiles/crop/`. New layers use the prefixes below.
 
