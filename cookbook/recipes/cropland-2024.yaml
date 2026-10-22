@@ -52,3 +52,13 @@ sprout:
     0: 0
     100: 1
     255: 255
+# Display tiles. Gray value is the sprout class. Alpha 0 is nodata.
+# Colour is applied in the client. The pyramid stops at zoom 12.
+tiles:
+  path: gs://nature-watch-tiles/cropland/2024/v1/
+  min_zoom: 0
+  max_zoom: 12
+  scheme: xyz
+  tile_size: 256
+  resampling: max
+  encoding: class-value
