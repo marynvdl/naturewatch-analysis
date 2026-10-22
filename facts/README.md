@@ -16,8 +16,7 @@ The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-z
 
 | Column | Value |
 | --- | --- |
-| `layer` | `cropland-2024` |
-| `layer_version` | `v1` |
+| `sprout_id` | `cropland-2024-v1` |
 | `method_id` | `area-weighted-spheroid-v1` |
 | `area_km2` | Cropland inside the place, in km² |
 | `percent` | `100 × area_km2 / valid km²`, or `0` when the valid area is `0` |

@@ -18,7 +18,7 @@ The sprout object is the published raster. Facts count its class pixels. Tiles a
 Ids:
 
 - Seed: `seed-<product>-<source>-<year>-v<n>`, for example `seed-cropland-glad-2024-v1`
-- Sprout: `sprout-<product>-<year>-v<n>`, for example `sprout-cropland-2024-v1`
+- Sprout: `<product>-<year>-v<n>`, for example `cropland-2024-v1`
 
 A version is a folder, so the next version can sit beside this one. Recipes stay as a flat list of files until a product has a second year.
 

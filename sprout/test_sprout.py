@@ -98,7 +98,7 @@ def test_stac_files_are_generated_from_the_recipe(tmp_path):
     dest = tmp_path / "cropland-2024-zaf.tif"
     _clip_facts, sprout = cropland.write_sprout(clip, dest, RECIPE, tmp_path)
     collection, item = cropland.stac_documents(RECIPE, sprout)
-    assert collection["id"] == "sprout-cropland-2024-v1"
+    assert collection["id"] == "cropland-2024-v1"
     assert collection["license"] == "other"
     assert "Khan et al. 2026" in collection["description"]
     assert collection["extent"]["temporal"]["interval"] == [["2024-01-01T00:00:00Z", "2025-01-01T00:00:00Z"]]

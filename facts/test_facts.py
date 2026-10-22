@@ -241,4 +241,5 @@ def test_pilot_query_uses_the_view_and_the_upsert_names_the_method():
     assert "public.pilot_places" in cropland.PILOT_SQL
     assert "ST_MakeValid" in cropland.PILOT_SQL
     assert "method_id" in cropland.UPSERT_FACT
-    assert "on conflict (place_id, layer, layer_version, method_id)" in cropland.UPSERT_FACT
+    assert cropland.sprout_id(RECIPE) == "cropland-2024-v1"
+    assert "on conflict (place_id, sprout_id, method_id)" in cropland.UPSERT_FACT

@@ -92,11 +92,11 @@ on conflict (id) do update set summary = excluded.summary
 
 UPSERT_FACT = """
 insert into public.facts (
-  place_id, layer, layer_version, method_id, area_km2, percent, valid_coverage
+  place_id, sprout_id, method_id, area_km2, percent, valid_coverage
 ) values (
-  %s::uuid, %s, %s, %s, %s, %s, %s
+  %s::uuid, %s, %s, %s, %s, %s
 )
-on conflict (place_id, layer, layer_version, method_id) do update set
+on conflict (place_id, sprout_id, method_id) do update set
   area_km2 = excluded.area_km2,
   percent = excluded.percent,
   valid_coverage = excluded.valid_coverage
@@ -105,8 +105,7 @@ on conflict (place_id, layer, layer_version, method_id) do update set
 COUNT_FACTS = """
 select count(*) as stored
 from public.facts
-where layer = %s
-  and layer_version = %s
+where sprout_id = %s
   and method_id = %s
   and place_id = any(%s::uuid[])
 """
@@ -151,6 +150,14 @@ def version_of(recipe: dict) -> str:
     if len(folder) < 2 or folder[0] != "v" or not folder[1:].isdigit():
         raise ValueError(f"sprout path has no version folder: {recipe['sprout']['path']}")
     return folder
+
+
+def sprout_id(recipe: dict) -> str:
+    sprout = recipe["sprout"]["id"]
+    version = version_of(recipe)
+    if not sprout.endswith(f"-{version}"):
+        raise ValueError(f"sprout id {sprout} does not end with {version}")
+    return sprout
 
 
 def class_codes(recipe: dict) -> ClassCodes:
@@ -561,19 +568,18 @@ def load_places(database_url: str) -> list[Place]:
 
 
 def save_facts(database_url: str, recipe: dict, results: list[PlaceResult]) -> None:
-    layer = recipe["id"]
-    version = version_of(recipe)
+    sprout = sprout_id(recipe)
     rows = []
     for item in results:
         area_km2, percent, coverage = fact_values(item.cropland_km2, item.valid_km2, item.place.area_km2)
-        rows.append((item.place.id, layer, version, METHOD_ID, area_km2, percent, coverage))
+        rows.append((item.place.id, sprout, METHOD_ID, area_km2, percent, coverage))
     place_ids = [item.place.id for item in results]
     with connect(database_url) as conn:
         with conn.transaction():
             conn.execute(UPSERT_METHOD, (METHOD_ID, METHOD_SUMMARY))
             with conn.cursor() as cursor:
                 cursor.executemany(UPSERT_FACT, rows)
-            stored = conn.execute(COUNT_FACTS, (layer, version, METHOD_ID, place_ids)).fetchone()["stored"]
+            stored = conn.execute(COUNT_FACTS, (sprout, METHOD_ID, place_ids)).fetchone()["stored"]
             if stored != len(results):
                 raise SystemExit(f"stored {stored} facts for {len(results)} places")
 

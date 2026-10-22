@@ -40,7 +40,7 @@ seed:
       year_represented: 2020
       url: https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/ZAF/ADM0/geoBoundaries-ZAF-ADM0.geojson
 sprout:
-  id: sprout-cropland-2024-v1
+  id: cropland-2024-v1
   path: gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif
   values:
     cropland: 1

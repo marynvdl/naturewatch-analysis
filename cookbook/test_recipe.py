@@ -39,7 +39,7 @@ def test_recipe_names_the_seed_and_the_sprout_raster():
     assert recipe["seed"]["id"] == "seed-cropland-glad-2024-v1"
     assert recipe["seed"]["path"] == SEED
     assert recipe["seed"]["tiles"] == TILES
-    assert recipe["sprout"]["id"] == "sprout-cropland-2024-v1"
+    assert recipe["sprout"]["id"] == "cropland-2024-v1"
     assert recipe["sprout"]["path"] == SPROUT
     assert "/published/" not in recipe["sprout"]["path"]
     assert recipe["grid"]["crs"] == "EPSG:4326"
