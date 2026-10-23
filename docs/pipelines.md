@@ -8,16 +8,18 @@ This repository publishes data. The web app, `naturewatch-app`, reads the publis
 
 The same table belongs in the app blueprint.
 
-| Subject                                                                         | Source of truth                                                                                                                                                                       |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| How to read the published map                                                   | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/using-the-map.md) `docs/using-the-map.md`                                                             |
-| What each map layer shows, and its limits                                       | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/data.md) `docs/data.md`                                                                               |
-| The running system and the published contract: buckets, object paths, catalogue | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/blueprint.md) `docs/blueprint.md`                                                                     |
-| Dated inspection notes                                                          | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/blueprint-notes.md) `docs/blueprint-notes.md`                                                         |
-| The first Sooty Earth release plan                                              | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/sooty-earth-roadmap.md) `docs/sooty-earth-roadmap.md`                                                 |
-| How a dataset becomes published objects                                         | This file                                                                                                                                                                             |
-| The hand-edited layer catalog                                                   | [`cookbook/recipes/`](../cookbook/recipes/)                                                                                                                                           |
-| How to run a step, and what that run cost                                       | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`sprout/README.md`](../sprout/README.md), [`gee/README.md`](../gee/README.md) |
+| Subject | Source of truth |
+| --- | --- |
+| How to read the published map | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/user/using-the-map.md) `docs/user/using-the-map.md` |
+| What each map layer shows, and its limits | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/user/data.md) `docs/user/data.md`. That page says what the reader sees. |
+| Database tables, bucket paths, and how the app reads layers | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/blueprint.md) `docs/blueprint.md` |
+| The archived first-release plan | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/archive/sooty-earth-roadmap.md) `docs/archive/sooty-earth-roadmap.md`. It lists what a release records: bytes stored, wall time, peak memory, tile count, and place count. It is not a task list. |
+| How a dataset becomes published objects, including transformations, scripts, and costs | This file, and the step READMEs |
+| The hand-edited catalog | [`cookbook/recipes/`](../cookbook/recipes/) |
+| The map catalogue | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/frontend/naturewatch/src/catalog/layers.json) `frontend/naturewatch/src/catalog/layers.json`. The app does not read STAC. |
+| How to run a step, and what that run cost | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`sprout/README.md`](../sprout/README.md), [`facts/README.md`](../facts/README.md), [`tiles/README.md`](../tiles/README.md), [`gee/README.md`](../gee/README.md). Run-cost figures stay in that README. |
+| Work parcels | `.cursor/parcels/` in [naturewatch-app](https://github.com/marynvdl/naturewatch-app) |
+| A single task | `.cursor/tasks/` in the repo that does the work |
 
 ## Data path
 
@@ -91,8 +93,8 @@ flowchart LR
   firms --> export --> cogs --> build --> tiles --> map
 ```
 
-`gee/fire/export_fire.py` writes one COG per Africa block to `gs://nature-watch-bucket/COGS/fire/<year>/`. The tile workflow reads those COGs and writes `gs://nature-watch-tiles/fire/<year>/`. Adding the year to the map is a change in the app catalogue.
+`gee/fire/export_fire.py` counts NASA FIRMS band `T21` in 14-day windows on a 1 km grid, then writes a 30 m COG for each of 25 Africa blocks to `gs://nature-watch-bucket/COGS/fire/<year>/`. `tasks/fireTiles/` reads those COGs and writes zooms 0–9 to `gs://nature-watch-tiles/fire/<year>/`. Adding the year to the map is a change in `layers.json`. What the reader sees is in `docs/user/data.md` in naturewatch-app.
 
 ## Keeping this page current
 
-Change the diagram when the path changes. Change the status table when a step starts or finishes. Leave the cost of a run in that step’s README. When a new object is one the app or the facts step will read, also update `docs/blueprint.md` in `naturewatch-app` in that same piece of work.
+Change the diagram when the path changes. Change the status table when a step starts or finishes. Run-cost figures stay in that step’s README. `docs/archive/sooty-earth-roadmap.md` in naturewatch-app lists what a release records: bytes stored, wall time, peak memory, tile count, and place count. That file is the archived plan, not a task list. When a new object is one the app or the facts step will read, also update `docs/blueprint.md` in `naturewatch-app` in that same piece of work. Run figures stay out of that blueprint.
