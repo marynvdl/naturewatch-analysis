@@ -47,7 +47,7 @@ A later hosted run can use a Batch job in `europe-west1`, started by hand. That 
 
 ## Cost for this step
 
-South Africa proof, 29 October 2026. Local. No virtual machine. No object written to `nature-watch-tiles` yet.
+South Africa proof, 29 October 2026. Local. No virtual machine.
 
 941 places, all with a cropland percent. The Python process took 29.3 seconds and peaked at 402,341,888 bytes. The archive is 3,592,259 bytes. Zoom 0–12.
 
@@ -69,8 +69,6 @@ gcloud storage cp data/places/protected-areas/places.pmtiles \
   --project=nature-watch-387210
 ```
 
-Ingress is free. Keeping 3.4 MB in `nature-watch-tiles` is under $0.01 a month. There is no Batch job on this path. A later global rebuild can use `python places/protected_areas.py submit`.
+Copied on 29 October 2026 from the laptop. No Batch job. Ingress is free. The stored object is 3,592,259 bytes (3.43 MiB). Keeping that in `nature-watch-tiles` is under $0.01 a month. A later global rebuild can use `python places/protected_areas.py submit`.
 
-Waiting for approval before that copy.
-
-After an authorized publish, record the object path, `gcloud storage ls gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles --project=nature-watch-387210`, and the bytes stored. To stop a copy in flight, Ctrl+C. To remove a published object, `gcloud storage rm gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles --project=nature-watch-387210`.
+The object is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. Check it with `gcloud storage ls -l gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles --project=nature-watch-387210`. The copy had already finished, so there was nothing to cancel in flight. Remove it with `gcloud storage rm gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles --project=nature-watch-387210`.
