@@ -12,6 +12,8 @@ archive and does not upload it. The hosted publish waits for approval.
 from __future__ import annotations
 
 import argparse
+import functools
+import http.server
 import json
 import os
 import resource
@@ -420,7 +422,7 @@ PREVIEW_HTML = """<!doctype html>
   <script>
     const protocol = new pmtiles.Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
-    const archive = new URL("places.pmtiles", window.location.href).href;
+    const archive = new URL("places.pmtiles", window.location.href);
     const map = new maplibregl.Map({
       container: "map",
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
@@ -431,8 +433,14 @@ PREVIEW_HTML = """<!doctype html>
       const note = document.getElementById("note");
       note.textContent = (event.error && event.error.message) || "map error";
     });
-    map.on("load", () => {
-      map.addSource("places", { type: "vector", url: "pmtiles://" + archive });
+    map.on("load", async () => {
+      const archiveUrl = archive.href;
+      const file = new File([await (await fetch(archiveUrl)).arrayBuffer()], "places.pmtiles");
+      protocol.add(new pmtiles.PMTiles({
+        getKey: () => archiveUrl,
+        getBytes: (offset, length) => file.slice(offset, offset + length).arrayBuffer().then((data) => ({ data }))
+      }));
+      map.addSource("places", { type: "vector", url: "pmtiles://" + archiveUrl });
       map.addLayer({
         id: "places-fill",
         type: "fill",
@@ -461,6 +469,90 @@ def write_preview(dest: Path) -> Path:
     html = dest.with_name("preview.html")
     html.write_text(PREVIEW_HTML)
     return html
+
+
+def parse_byte_range(header: str | None, size: int) -> tuple[int, int, bool]:
+    """Inclusive start and end, and whether the client asked for a range."""
+    if not header:
+        return 0, size - 1, False
+    if not header.startswith("bytes="):
+        raise ValueError(f"unsupported range: {header}")
+    spec = header.removeprefix("bytes=").split(",", 1)[0]
+    start_text, _, end_text = spec.partition("-")
+    if start_text == "":
+        start = max(0, size - int(end_text))
+        end = size - 1
+    else:
+        start = int(start_text)
+        end = int(end_text) if end_text else size - 1
+    if start < 0 or end < start or start >= size:
+        raise ValueError(f"unsatisfiable range: {header}")
+    return start, min(end, size - 1), True
+
+
+class ByteRangeHandler(http.server.SimpleHTTPRequestHandler):
+    """Serve PMTiles with HTTP Range. Python's default handler often returns 200 for the whole file."""
+
+    def end_headers(self) -> None:
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Range")
+        self.send_header("Access-Control-Expose-Headers", "Accept-Ranges, Content-Length, Content-Range")
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def send_head(self):
+        path = Path(self.translate_path(self.path.split("?", 1)[0]))
+        if not path.is_file():
+            self.send_error(404, "File not found")
+            return None
+        size = path.stat().st_size
+        try:
+            start, end, ranged = parse_byte_range(self.headers.get("Range"), size)
+        except ValueError:
+            self.send_error(416, "Requested range not satisfiable")
+            return None
+        length = end - start + 1
+        handle = path.open("rb")
+        handle.seek(start)
+        if ranged:
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(str(path)))
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        handle.length = length  # type: ignore[attr-defined]
+        return handle
+
+    def copyfile(self, source, outputfile) -> None:
+        remaining = getattr(source, "length", None)
+        if remaining is None:
+            super().copyfile(source, outputfile)
+            return
+        while remaining > 0:
+            chunk = source.read(min(65536, remaining))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            remaining -= len(chunk)
+
+
+def command_preview(dest: Path, port: int) -> None:
+    if not dest.exists():
+        raise SystemExit(f"no archive at {dest}. Run prove first.")
+    write_preview(dest)
+    handler = functools.partial(ByteRangeHandler, directory=str(dest.parent))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    print(f"preview http://127.0.0.1:{port}/preview.html", flush=True)
+    print("cancel: Ctrl+C", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("stopped", flush=True)
+    finally:
+        server.server_close()
 
 
 def print_stats(stats: dict) -> None:
@@ -694,9 +786,10 @@ def peak_memory_bytes() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("build", "prove", "run", "submit"))
+    parser.add_argument("command", choices=("build", "prove", "preview", "run", "submit"))
     parser.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--dest",
         type=Path,
@@ -707,6 +800,9 @@ def main() -> None:
     args = parser.parse_args()
     started = time.perf_counter()
     try:
+        if args.command == "preview":
+            command_preview(args.dest, args.port)
+            return
         recipe = load_recipe(args.recipe)
         if args.command == "submit":
             command_submit(args.recipe)

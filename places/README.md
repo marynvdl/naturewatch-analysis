@@ -16,7 +16,7 @@ The vector layer is `places`. Each feature carries:
 
 `places.geom` is read with the same database URL as the facts step. It is not granted to `anon`. The archive does not include names or a polygon download.
 
-Larger places are written from a lower zoom. The bands are on the recipe: 10,000 km² from zoom 0, 1,000 km² from zoom 3, 100 km² from zoom 6, 10 km² from zoom 8. Every copied place is present by zoom 12. Geometry is simplified at low zoom and left at full resolution at zoom 12.
+Larger places are written from a lower zoom. The bands are on the recipe: 1,000 km² from zoom 0, 300 km² from zoom 2, 100 km² from zoom 3, 30 km² from zoom 4, 10 km² from zoom 6. Every copied place is present by zoom 6. Geometry is simplified at low zoom and left at full resolution at zoom 12. Colour and line width are not in the archive. The app paints the layer when it draws the map.
 
 ## Run
 
@@ -35,13 +35,13 @@ python places/protected_areas.py prove
 
 That writes `data/places/protected-areas/places.pmtiles` and a `preview.html` beside it. It does not upload. Cancel with Ctrl+C.
 
-To look at the generalization, serve that folder and open the preview:
+To look at the generalization:
 
 ```bash
-python -m http.server 8765 --directory data/places/protected-areas
+python places/protected_areas.py preview
 ```
 
-Then open `http://127.0.0.1:8765/preview.html`.
+Then open `http://127.0.0.1:8765/preview.html`. That server answers HTTP Range requests. A plain `python -m http.server` often returns the whole file instead, and PMTiles then shows a byte-serving error. The hosted object on `nature-watch-tiles` does support Range; the app will read it that way. Do not open `preview.html` as a file.
 
 A later hosted run can use a Batch job in `europe-west1`, started by hand. That path is `python places/protected_areas.py submit`. It is not used for this first archive. Batch deletes the virtual machine when the task ends. Cancel with `gcloud batch jobs delete <job-id> --location=europe-west1 --project=nature-watch-387210`.
 
@@ -49,16 +49,17 @@ A later hosted run can use a Batch job in `europe-west1`, started by hand. That 
 
 South Africa proof, 29 October 2026. Local. No virtual machine. No object written to `nature-watch-tiles` yet.
 
-941 places, all with a cropland percent. The Python process took 28.1 seconds and peaked at 400,048,128 bytes. The archive is 3,317,922 bytes. Zoom 0–12.
+941 places, all with a cropland percent. The Python process took 29.3 seconds and peaked at 402,341,888 bytes. The archive is 3,592,259 bytes. Zoom 0–12.
 
 | Min zoom | Area | Places first written |
 | --- | --- | --- |
-| 0 | ≥ 10,000 km² | 2 |
-| 3 | ≥ 1,000 km² | 10 |
-| 6 | ≥ 100 km² | 146 |
-| 8 | ≥ 10 km² | 783 |
+| 0 | ≥ 1,000 km² | 12 |
+| 2 | ≥ 300 km² | 48 |
+| 3 | ≥ 100 km² | 98 |
+| 4 | ≥ 30 km² | 288 |
+| 6 | ≥ 10 km² | 495 |
 
-All 941 are present by zoom 8. Cancel a local prove with Ctrl+C.
+All 941 are present by zoom 6. Cancel a local prove with Ctrl+C.
 
 The hosted publish is one object copy from the laptop into `nature-watch-tiles`:
 
@@ -68,7 +69,7 @@ gcloud storage cp data/places/protected-areas/places.pmtiles \
   --project=nature-watch-387210
 ```
 
-Ingress is free. Keeping 3.2 MB in `nature-watch-tiles` is under $0.01 a month. There is no Batch job on this path. A later global rebuild can use `python places/protected_areas.py submit`.
+Ingress is free. Keeping 3.4 MB in `nature-watch-tiles` is under $0.01 a month. There is no Batch job on this path. A later global rebuild can use `python places/protected_areas.py submit`.
 
 Waiting for approval before that copy.
 

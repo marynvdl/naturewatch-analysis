@@ -2,9 +2,11 @@
 
 Run: python -m pytest places
 """
+import http.client
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import yaml
@@ -74,7 +76,7 @@ def sample_places():
         },
         {
             "id": "22222222-2222-2222-2222-222222222222",
-            "area_km2": 1500,
+            "area_km2": 150,
             "cropland_percent": 12.5,
             "bounds": (29.0, -26.0, 29.4, -25.6),
         },
@@ -90,14 +92,15 @@ def sample_places():
 def test_minzoom_follows_the_size_bands():
     bands = places.places_contract(RECIPE)["minzoom_by_area_km2"]
     assert places.minzoom_for_area(19000, bands) == 0
-    assert places.minzoom_for_area(10000, bands) == 0
-    assert places.minzoom_for_area(9999, bands) == 3
-    assert places.minzoom_for_area(1000, bands) == 3
-    assert places.minzoom_for_area(999, bands) == 6
-    assert places.minzoom_for_area(100, bands) == 6
-    assert places.minzoom_for_area(99, bands) == 8
-    assert places.minzoom_for_area(10, bands) == 8
-    assert places.minzoom_for_area(9, bands) == 8
+    assert places.minzoom_for_area(1000, bands) == 0
+    assert places.minzoom_for_area(999, bands) == 2
+    assert places.minzoom_for_area(300, bands) == 2
+    assert places.minzoom_for_area(299, bands) == 3
+    assert places.minzoom_for_area(100, bands) == 3
+    assert places.minzoom_for_area(99, bands) == 4
+    assert places.minzoom_for_area(30, bands) == 4
+    assert places.minzoom_for_area(29, bands) == 6
+    assert places.minzoom_for_area(10, bands) == 6
 
 
 def test_the_recipe_names_the_protected_areas_archive():
@@ -134,15 +137,19 @@ def test_large_places_appear_before_small_ones(tmp_path):
     assert dest.stat().st_size == stats["bytes"]
     large, medium, small = (row["id"] for row in sample_places())
     at0 = places.unique_ids_at_zoom(dest, 0)
+    at2 = places.unique_ids_at_zoom(dest, 2)
     at3 = places.unique_ids_at_zoom(dest, 3)
+    at4 = places.unique_ids_at_zoom(dest, 4)
     at6 = places.unique_ids_at_zoom(dest, 6)
     at8 = places.unique_ids_at_zoom(dest, 8)
     assert at0 == {large}
     assert medium not in at0
+    assert medium not in at2
     assert small not in at0
     assert medium in at3
     assert small not in at3
-    assert small not in at6
+    assert small not in at4
+    assert small in at6
     assert {large, medium, small} <= at8
     copied = places.properties_at_zoom(dest, 8)
     assert copied[large]["area_km2"] == 19000
@@ -168,6 +175,41 @@ def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
     dumped = str(job)
     assert "postgresql://" not in dumped
     assert "DATABASE_URL" not in dumped
+
+
+def test_the_preview_loads_the_archive_from_memory():
+    html = places.PREVIEW_HTML
+    assert "getBytes" in html
+    assert "arrayBuffer" in html
+
+
+def test_byte_ranges_are_inclusive():
+    assert places.parse_byte_range(None, 100) == (0, 99, False)
+    assert places.parse_byte_range("bytes=0-127", 1000) == (0, 127, True)
+    assert places.parse_byte_range("bytes=10-", 50) == (10, 49, True)
+
+
+def test_the_preview_server_serves_a_byte_range(tmp_path):
+    archive = tmp_path / "places.pmtiles"
+    archive.write_bytes(bytes(range(256)))
+    handler = places.functools.partial(places.ByteRangeHandler, directory=str(tmp_path))
+    server = places.http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/places.pmtiles", headers={"Range": "bytes=0-7"})
+        response = conn.getresponse()
+        body = response.read()
+        assert response.status == 206
+        assert response.getheader("Content-Length") == "8"
+        assert response.getheader("Content-Range") == "bytes 0-7/256"
+        assert body == bytes(range(8))
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_the_laptop_cannot_start_the_places_run():

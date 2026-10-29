@@ -23,9 +23,10 @@ tiles:
     - cropland_percent
   # A place is written from this zoom through max_zoom. Larger first.
   minzoom_by_area_km2:
-    - { area_km2: 10000, minzoom: 0 }
-    - { area_km2: 1000, minzoom: 3 }
-    - { area_km2: 100, minzoom: 6 }
-    - { area_km2: 10, minzoom: 8 }
+    - { area_km2: 1000, minzoom: 0 }
+    - { area_km2: 300, minzoom: 2 }
+    - { area_km2: 100, minzoom: 3 }
+    - { area_km2: 30, minzoom: 4 }
+    - { area_km2: 10, minzoom: 6 }
   simplification: 1
   simplification_max_zoom: 0
