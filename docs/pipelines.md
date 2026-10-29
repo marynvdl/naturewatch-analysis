@@ -17,7 +17,7 @@ The same table belongs in the app blueprint.
 | The first Sooty Earth release plan                                              | [naturewatch-app](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/sooty-earth-roadmap.md) `docs/sooty-earth-roadmap.md`                                                 |
 | How a dataset becomes published objects                                         | This file                                                                                                                                                                             |
 | The hand-edited layer catalog                                                   | [`cookbook/recipes/`](../cookbook/recipes/)                                                                                                                                           |
-| How to run a step, and what that run cost                                       | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`sprout/README.md`](../sprout/README.md), [`gee/README.md`](../gee/README.md) |
+| How to run a step, and what that run cost                                       | The step README: [`cookbook/README.md`](../cookbook/README.md), [`seed/README.md`](../seed/README.md), [`sprout/README.md`](../sprout/README.md), [`gee/README.md`](../gee/README.md), [`places/README.md`](../places/README.md) |
 
 ## Data path
 
@@ -30,6 +30,7 @@ flowchart TD
   sprout[Sprout]
   facts[Facts]
   tiles[Tiles]
+  places[Places]
   tilesBucket[(nature-watch-tiles)]
   database[(App database)]
   app[Web app]
@@ -39,6 +40,7 @@ flowchart TD
   recipe --> sprout
   recipe --> facts
   recipe --> tiles
+  recipe --> places
   seed -->|writes the seed| bucket
   bucket -->|reads the seed| sprout
   sprout -->|writes the sprout raster| bucket
@@ -46,7 +48,9 @@ flowchart TD
   bucket -->|reads the sprout raster| tiles
   database -->|reads place geometries| facts
   facts -->|writes facts| database
+  database -->|reads places and facts| places
   tiles -->|writes map tiles| tilesBucket
+  places -->|writes PMTiles| tilesBucket
   tilesBucket --> app
   database --> app
 ```
@@ -59,13 +63,14 @@ There is no pipeline orchestrator in this release. Each job is started by hand. 
 
 | Piece       | What it does                                                                                                                                                                                              | Now                                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cookbook    | The only catalog edited by hand. A YAML recipe names the seed path, the sprout raster, the class values, and the grid.                                                                                    | `cookbook/recipes/cropland-2024.yaml` is that recipe for GLAD annual cropland 2024.                                                                  |
+| Cookbook    | The only catalog edited by hand. A YAML recipe names a raster year or a places archive.                                                                                                                   | `cookbook/recipes/cropland-2024.yaml` is GLAD annual cropland 2024. `cookbook/recipes/places-protected-areas.yaml` is the protected-area archive.     |
 | Seed        | Brings in the publisher’s files, checks them against the recipe, and writes a clip under the seed path.                                                                                                   | The six South Africa tiles and the mainland clip are in `gs://nature-watch-bucket/seeds/cropland/glad/2024/v1/`. The run record is `seed/README.md`. |
 | Data store  | Private bucket `nature-watch-bucket`, project `nature-watch-387210`, region EU. Sprout rasters and the static STAC files for that version live here.                                                       | Public access prevention is on. Fire COGs stay at `COGS/fire/<year>/`.                                                                               |
 | Sprout      | Writes one versioned raster later steps read. Class values, nodata, and CRS are in the file. Static STAC files are generated from the recipe into the same version folder. They are not a second catalog. | `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` and the STAC files beside it. Written by a hand-started Batch job in `europe-west1`. The run record is `sprout/README.md`. |
 | Facts       | Counts the sprout raster inside each place and writes square kilometres, percent, and valid coverage to the app database. The formula is `area-weighted-spheroid-v1`.                                    | 941 rows for sprout `cropland-2024-v1` are in the hosted `facts` table. The run record is `facts/README.md`. |
 | Tiles       | Builds map tiles from the sprout raster and writes them to public `nature-watch-tiles`. Colour is applied in the client.                                                                                  | Cropland zooms 0–12 are at `gs://nature-watch-tiles/cropland/2024/v1/`. Written by Batch job `tiles-cropland-2024-v1`. The run record is [`tiles/README.md`](../tiles/README.md). Fire stays on `tasks/fireTiles`. |
-| Tiles store | Public bucket `nature-watch-tiles`.                                                                                                                                                                       | Cropland is `cropland/<year>/v<n>/{z}/{x}/{y}.png`. Fire tiles are `fire/<year>/{z}/{x}/{y}.png`. The 2015 and 2019 crop tiles stay at `crop/`. |
+| Places      | Reads place geometries and copied facts from the app database and writes one PMTiles archive to public `nature-watch-tiles`. Colour is applied in the client. Later place types can add another recipe.     | Protected areas are `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. The run record is [`places/README.md`](../places/README.md). |
+| Tiles store | Public bucket `nature-watch-tiles`.                                                                                                                                                                       | Cropland is `cropland/<year>/v<n>/{z}/{x}/{y}.png`. Fire tiles are `fire/<year>/{z}/{x}/{y}.png`. Places archives are `places/<type>/v<n>/places.pmtiles`. The 2015 and 2019 crop tiles stay at `crop/`. |
 
 The crop, built, and bare virtual-machine tasks are retired. Their folders and workflow files are in `archive/vm-tile-tasks/`. Those workflows are not in `.github/workflows/`, and they do not start a machine. The dams Mapbox recipe is in `archive/mapbox-dams/`. The map still reads the existing tileset.
 

@@ -6,7 +6,7 @@ Repository: naturewatch-analysis. Start only after Places Tiles task 01 has merg
 
 ## Goal
 
-Build one PMTiles archive from the authoritative places, prove it on the current South Africa rows, and publish it to `nature-watch-tiles`.
+Initiate a new pipeline, the Places Pipeline. Update docs (especially [pipelines.md](../pipelines.md) and the diagram within it) accordingly. Build one PMTiles archive from the authoritative places, prove it on the current South Africa rows, and publish it to `nature-watch-tiles`. This should be set up and reproducible as to one day be automatically ran with an orchestrator.
 
 ## Facts already stored
 
@@ -14,13 +14,16 @@ The app database holds terrestrial protected areas in South Africa of at least 1
 
 ## Do this
 
+- Check and preview style decisions with me.
+- Design a reproducible way of having this Places tiles generated, called the Places pipeline. In the future, we may create more PMTiles for other Place types.
 - Read place geometries and attributes from the app database. Do not read `places.geom` through the anon key.
-- Write one PMTiles archive at `gs://nature-watch-tiles/places/protected-area/v1/places.pmtiles`.
+- Write one PMTiles archive at `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`.
 - Each feature carries `places.id`, `area_km2`, and cropland percent when that fact exists. Rebuild the archive when those copied fields change.
 - Generalize so the largest places are visible at a world view and smaller places appear as you zoom in.
 - Prove the archive on the current South Africa rows before any hosted publish.
 - Record the run in a step README in this repo: bytes stored, wall time, peak memory, zoom range, and how to cancel the job. Do not copy that procedure into naturewatch-app.
 - Before any hosted publish, record the expected cost and wait for approval. After an authorized run, record the task id, output, status check, and how to cancel it, then return. Do not wait in the chat for the job.
+- Ask me when you're not 90% sure.
 
 ## Do not
 

@@ -10,7 +10,7 @@ Rebuild that archive from the global places and replace the published object. Re
 
 ## Facts already stored
 
-Task 02 published `gs://nature-watch-tiles/places/protected-area/v1/places.pmtiles` from the South Africa rows. Task 04 in naturewatch-app then stored terrestrial protected areas worldwide of at least 10 km². The app already draws that object path. Raster tiles stay as they are.
+Task 02 published `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles` from the South Africa rows. Task 04 in naturewatch-app then stored terrestrial protected areas worldwide of at least 10 km². The app already draws that object path. Raster tiles stay as they are.
 
 ## Do this
 

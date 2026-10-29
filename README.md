@@ -7,6 +7,7 @@ This repository publishes data for [naturewatch-app](https://github.com/marynvdl
 ## Live
 
 - **Cropland 2024.** The recipe is `cookbook/recipes/cropland-2024.yaml`. The seed run is [seed/README.md](seed/README.md). The sprout run is [sprout/README.md](sprout/README.md). The facts run is [facts/README.md](facts/README.md). The tile run is [tiles/README.md](tiles/README.md).
+- **Places.** Protected-area boundaries. The recipe is `cookbook/recipes/places-protected-areas.yaml`. The run record is [places/README.md](places/README.md).
 - **Fire.** Export from Earth Engine, then build tiles. Both are started by hand. See [gee/README.md](gee/README.md).
 
 `gs://nature-watch-bucket` is private. Map tiles stay on public `gs://nature-watch-tiles`.

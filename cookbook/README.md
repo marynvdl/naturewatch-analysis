@@ -1,6 +1,6 @@
 # Cookbook
 
-How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). Recipes for Sooty Earth layers. `recipes/` is the only catalog edited by hand. Later steps read a recipe. They do not grow a second inventory.
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). Recipes for Sooty Earth layers and place archives. `recipes/` is the only catalog edited by hand. Later steps read a recipe. They do not grow a second inventory.
 
 Fire exports stay at `gs://nature-watch-bucket/COGS/fire/`. The 2015 and 2019 crop tiles stay at `gs://nature-watch-tiles/crop/`. New layers use the prefixes below.
 
@@ -13,6 +13,7 @@ Fire exports stay at `gs://nature-watch-bucket/COGS/fire/`. The 2015 and 2019 cr
 | Seed | `gs://nature-watch-bucket/seeds/<product>/<source>/<year>/v<n>/` |
 | Sprout | `gs://nature-watch-bucket/sprouts/<product>/<year>/v<n>/<product>-<year>-<extent>.tif` |
 | Tiles | `gs://nature-watch-tiles/<product>/<year>/v<n>/{z}/{x}/{y}.png` |
+| Places | `gs://nature-watch-tiles/places/<type>/v<n>/places.pmtiles` |
 
 The sprout object is the published raster. Facts count its class pixels. Tiles are built from it and written to `nature-watch-tiles`. The static STAC files for a version go in that same `v<n>/` prefix and point at the sprout. There is no separate published copy.
 
@@ -34,6 +35,10 @@ Read one sample before the bulk download. The sample is the smallest piece the p
 `recipes/cropland-2024.yaml` names the GLAD annual cropland 2024 seed and the South Africa sprout. The seed tiles are the six 10° files whose cells meet mainland South Africa. A `.keep` object in each prefix marks the folder. It is not a raster. The seed step copies the tile names in the recipe, and the clip named beside them, into the seed prefix.
 
 `sprout/cropland.py` writes the sprout file from the seed clip. Its classes are 1 for cropland, 0 for other land, and 255 for nodata, including land outside South Africa. `tiles/cropland.py` reads that sprout and writes class-value tiles for zooms 0–12. The tile prefix is on the recipe. Seed value 100 is cropland and maps to sprout value 1. Seed value 0 is everything else and maps to sprout value 0. Clip value 255 is nodata and stays 255. The source tiles set no nodata value. `seed/cropland.py` downloads the tiles, checks them, and writes a mainland South Africa clip under the seed path. Pixels outside that boundary are 255 in the clip. That 255 is not a GLAD code.
+
+## places-protected-areas
+
+`recipes/places-protected-areas.yaml` names the protected-area PMTiles archive. It is not a raster year. `places/protected_areas.py` reads `places.geom` and the stored cropland percent from the app database and writes `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. The map paints the layer in the client. A later place type adds another recipe and another object path.
 
 ## Checks
 
