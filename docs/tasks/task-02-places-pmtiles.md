@@ -35,8 +35,8 @@ The app database holds terrestrial protected areas in South Africa of at least 1
 - The archive exists at that object path, or this pull request stops before the hosted publish and records how to run it.
 - A local or small proof shows place ids, areas, and cropland percent on the current South Africa rows.
 - The step README has the run cost, or the expected cost waiting for approval.
-- The work is on a branch from `develop`, in one pull request into `develop`. Report the pull request address. Do not merge it.
+- The work is on a branch from `main`, in one pull request into `main`. Report the pull request address. Do not merge it.
 
 ## How to work
 
-Branch from `develop`. Do this task only. Explain billable processing and get approval before starting it. Do not commit secrets. Do not add an AI or tool attribution to the commit or the pull request.
+Branch from `main`. Do this task only. Explain billable processing and get approval before starting it. Do not commit secrets. Do not add an AI or tool attribution to the commit or the pull request.

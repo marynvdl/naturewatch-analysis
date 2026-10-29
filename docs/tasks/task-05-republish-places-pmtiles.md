@@ -32,8 +32,8 @@ Task 02 published `gs://nature-watch-tiles/places/protected-area/v1/places.pmtil
 
 - The published archive is built from the global places, or this pull request stops before the hosted publish and records how to run it.
 - The step README has the new run cost, or the expected cost waiting for approval.
-- The work is on a branch from `develop`, in one pull request into `develop`. Report the pull request address. Do not merge it.
+- The work is on a branch from `main`, in one pull request into `main`. Report the pull request address. Do not merge it.
 
 ## How to work
 
-Branch from `develop`. Do this task only. Explain billable processing and get approval before starting it. Do not commit secrets. Do not add an AI or tool attribution to the commit or the pull request.
+Branch from `main`. Do this task only. Explain billable processing and get approval before starting it. Do not commit secrets. Do not add an AI or tool attribution to the commit or the pull request.
