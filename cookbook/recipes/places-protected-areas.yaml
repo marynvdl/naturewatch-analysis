@@ -1,0 +1,31 @@
+# Hand-edited catalog for the protected-area boundary archive.
+# The Places pipeline reads this recipe. It does not edit it.
+# Geometries come from the app database, not from a seed raster.
+id: places-protected-areas
+title: Protected-area boundaries
+kind: places
+source:
+  table: public.places
+  geom: places.geom
+facts:
+  sprout_id: cropland-2024-v1
+  method_id: area-weighted-spheroid-v1
+tiles:
+  path: gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles
+  layer: places
+  min_zoom: 0
+  max_zoom: 12
+  scheme: pmtiles
+  # Paint is applied in the client. These fields are copied for filters.
+  properties:
+    - id
+    - area_km2
+    - cropland_percent
+  # A place is written from this zoom through max_zoom. Larger first.
+  minzoom_by_area_km2:
+    - { area_km2: 10000, minzoom: 0 }
+    - { area_km2: 1000, minzoom: 3 }
+    - { area_km2: 100, minzoom: 6 }
+    - { area_km2: 10, minzoom: 8 }
+  simplification: 1
+  simplification_max_zoom: 0
