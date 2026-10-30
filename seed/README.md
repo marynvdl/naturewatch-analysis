@@ -49,38 +49,35 @@ All six tiles are `EPSG:4326`, `0.00025°`, uint8, with no nodata flag. Every pi
 
 ## cropland 2024 global
 
-`transfer` reads `cookbook/recipes/cropland-2024-v2.yaml`, writes a URL list, and submits one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. Storage Transfer first writes each object as the source host plus the URL path. `check` submits the GDAL check after every listed tile is in that prefix, either under that temporary path or already as a flat file name. The check uses the version 1 grid and class rules. A listed tile that fails stops the run and is left on the host path. A tile that passes is moved to the file name alone, and the host path is deleted. There is no country clip and no clip file.
+Run on 30 October 2026. The transfer is finished. The check is submitted and has not finished.
 
-`20S_020E.tif` is kept at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. The version 1 prefix is not a destination. The transfer uses `--overwrite-when=never` and refuses to start when a flat file or a host-path copy is already there. The move also refuses to replace a flat file that already exists.
+`transfer` read `cookbook/recipes/cropland-2024-v2.yaml`, wrote a URL list, and submitted one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. Storage Transfer writes each object as the source host plus the URL path. Later checks read that object and leave it there. There is no country clip and no clip file.
 
-The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket, checks it, and deletes the local copy. The move is a same-bucket rewrite, so the bytes are not copied through the virtual machine. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`.
+The 2024 check `seed-cropland-glad-2024-v2` was already submitted with the move. A tile that passes that job is kept at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. The object it reads first is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif`. The version 1 prefix is not a destination.
 
-`glad.umd.edu/robots.txt` does not disallow `/datasets/`. The version 1 download already used Range requests on this server.
+The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket and deletes the local copy. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`. The 2024 job also rewrites each tile that passes onto the flat file name and deletes the host path. A later check does not.
 
-The transfer command grants `roles/storage.legacyBucketWriter` on `nature-watch-bucket` to `project-637146989512@storage-transfer-service.iam.gserviceaccount.com`, so the service can read the URL list and write the version 2 prefix.
-
-Neither command has been run.
+The transfer command grants `roles/storage.legacyBucketWriter` and `roles/storage.objectViewer` on `nature-watch-bucket` to `project-637146989512@storage-transfer-service.iam.gserviceaccount.com`. The writer role does not include object reads. The private URL list and the never-overwrite check need `storage.objects.get`.
 
 ```bash
 python seed/cropland.py transfer --recipe cookbook/recipes/cropland-2024-v2.yaml
 python seed/cropland.py check --recipe cookbook/recipes/cropland-2024-v2.yaml
 ```
 
-Do not run those until the expected cost below is approved. `check` refuses to submit while any listed tile is missing. Each command prints how to read status and how to cancel, then returns.
-
-| | Command |
+| | |
 | --- | --- |
-| Transfer status | `gcloud transfer jobs describe cropland-2024-v2-seed --project=nature-watch-387210` |
-| Transfer operations | `gcloud transfer operations list --job-names=cropland-2024-v2-seed --project=nature-watch-387210` |
-| Cancel the running transfer | `gcloud transfer operations cancel OPERATION --project=nature-watch-387210` |
-| Delete the transfer job | `gcloud transfer jobs delete cropland-2024-v2-seed --project=nature-watch-387210` |
+| Transfer job | `transferJobs/cropland-2024-v2-seed` |
+| Transfer operation | `transferOperations/transferJobs-cropland-2024-v2-seed-13675014377511653293` |
+| Transfer status | `gcloud transfer operations describe transferOperations/transferJobs-cropland-2024-v2-seed-13675014377511653293 --project=nature-watch-387210` |
+| Cancel a running transfer | `gcloud transfer operations cancel OPERATION --project=nature-watch-387210` |
+| Check job | `seed-cropland-glad-2024-v2` |
 | Check status | `gcloud batch jobs describe seed-cropland-glad-2024-v2 --location=europe-west1 --project=nature-watch-387210` |
 | Cancel the check | `gcloud batch jobs delete seed-cropland-glad-2024-v2 --location=europe-west1 --project=nature-watch-387210` |
 
-## Expected cost, waiting for approval
+## Cost for the global seed
 
-The expected seed storage is 4,173,850,674 bytes, from [`cookbook/README.md`](../cookbook/README.md). That scales the six version 1 tiles (112,300,915 bytes) to 223 tiles. It is not a measured sum of the 223 files. The sprout and the PMTiles archive are later steps.
+The estimate before the run was 4,173,850,674 bytes, from [`cookbook/README.md`](../cookbook/README.md). The transfer stored 5,289,882,209 bytes, 223 objects, all of the bytes it found. Storage Transfer Service does not charge for an agentless URL-list transfer. The bucket holds those bytes in `nature-watch-bucket` (EU). The sprout and the PMTiles archive are later steps.
 
-Storage Transfer Service does not charge for an agentless URL-list transfer. The bucket will store those bytes in `nature-watch-bucket` (EU). The transfer writes about 223 objects, one Class A write per tile, and reads the URL list, one Class B read per tile. A larger tile can take more than one write. The check then rewrites each tile onto its flat file name and deletes the host path, one rewrite and one delete per tile, in the same bucket. After that delete, one copy remains. The URL list itself is a few kilobytes in the scratch prefix.
+The successful operation started at `2026-10-30T09:58:08Z` and ended at `2026-10-30T10:02:32Z`, 264 seconds. An earlier operation, `transferOperations/transferJobs-cropland-2024-v2-seed-15313645261421247161`, failed with `PERMISSION_DENIED` and copied nothing. The transfer service does not report peak memory. No virtual machine was started for the transfer, and none was left running. The version 1 seed was not changed.
 
-The check has not started, so its wall time and peak memory are not measured. No virtual machine was started for this step, and none was left running. The version 1 seed was not changed.
+The check `seed-cropland-glad-2024-v2` was submitted at `2026-10-30T11:15:57Z`. Its wall time and peak memory are not known until it finishes. That job rewrites each tile that passes onto the flat file name and deletes the host path. The check uses the version 1 grid and class rules.
