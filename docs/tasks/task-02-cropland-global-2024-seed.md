@@ -18,6 +18,7 @@ Version 1 checks, from `seed/README.md`: geographic CRS `EPSG:4326`, pixel size 
 
 ## Do this
 
+- Ask me when you're not 90% sure.
 - Extend `seed/cropland.py` so the global recipe is a command that reads the recipe. One command builds the URL list and submits the Storage Transfer into `seed.path`. One command submits the GDAL check next to the bucket. Keep the version 1 laptop command working for `cropland-2024.yaml`.
 - The check matches the version 1 grid and class rules. There is no country clip and no clip file. A listed tile that fails the check stops the run.
 - Before the transfer, restate the expected bytes from task 01 and wait for approval.

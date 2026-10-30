@@ -7,14 +7,24 @@ any seed value is still "confirm-from-one-tile".
 
 The South Africa clip keeps GLAD's codes inside the mainland boundary and
 writes the clip's nodata value outside it. The sprout step remaps those codes.
+That laptop path is the version 1 command. It refuses a recipe with no clip.
+
+The global recipe is two other commands. `transfer` writes a URL list from the
+recipe and submits a Storage Transfer Service job into `seed.path`. `check`
+submits a GDAL check on a spot machine in europe-west1. Neither command
+downloads the tile set to the laptop, and neither writes a clip.
 
 Examples
   python seed/cropland.py sample
   python seed/cropland.py run
+  python seed/cropland.py transfer --recipe cookbook/recipes/cropland-2024-v2.yaml
+  python seed/cropland.py check --recipe cookbook/recipes/cropland-2024-v2.yaml
 """
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import resource
 import subprocess
 import sys
@@ -22,8 +32,8 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
-import yaml
 from osgeo import gdal, ogr, osr
 
 gdal.UseExceptions()
@@ -33,6 +43,18 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECIPE = ROOT / "cookbook" / "recipes" / "cropland-2024.yaml"
 DEFAULT_WORK = ROOT / "data" / "seed" / "cropland-2024"
 PROJECT = "nature-watch-387210"
+REGION = "europe-west1"
+IMAGE = "ghcr.io/osgeo/gdal:ubuntu-small-3.11.4"
+MACHINE = "e2-standard-2"
+SERVICE_ACCOUNT = "637146989512-compute@developer.gserviceaccount.com"
+TRANSFER_AGENT = "project-637146989512@storage-transfer-service.iam.gserviceaccount.com"
+V1_PREFIX = "gs://nature-watch-bucket/seeds/cropland/glad/2024/v1/"
+SCRATCH = "gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/"
+TRANSFER_JOB = "cropland-2024-v2-seed"
+CHECK_JOB = "seed-cropland-glad-2024-v2"
+BATCH_ENV = "NATUREWATCH_SEED_BATCH"
+# 223 exact histograms. A short limit would stop a slow tile.
+CHECK_RUN_SECONDS = "43200s"
 PENDING = "confirm-from-one-tile"
 CHUNK = 2 * 1024 * 1024
 USER_AGENT = "naturewatch-analysis"
@@ -59,7 +81,34 @@ class RasterInfo:
 
 
 def load_recipe(path: Path) -> dict:
-    return yaml.safe_load(path.read_text())
+    text = path.read_text()
+    if path.suffix == ".json":
+        return json.loads(text)
+    import yaml
+
+    return yaml.safe_load(text)
+
+
+def seed_prefix(path: str) -> str:
+    return path if path.endswith("/") else path + "/"
+
+
+def require_laptop_recipe(recipe: dict) -> None:
+    """The ranged download and the clip belong to the version 1 recipe."""
+    if "clip" not in recipe["seed"]:
+        raise SystemExit(
+            "This recipe has no clip, so the laptop download does not run. "
+            "The global commands are transfer and check."
+        )
+
+
+def require_transfer_recipe(recipe: dict) -> None:
+    """The global commands must not write the version 1 seed."""
+    path = seed_prefix(recipe["seed"]["path"])
+    if "clip" in recipe["seed"] or path.startswith(V1_PREFIX):
+        raise SystemExit(
+            f"{path} is the version 1 seed. The transfer command does not write there."
+        )
 
 
 def pending_values(recipe: dict) -> list[str]:
@@ -497,22 +546,335 @@ def command_upload(recipe: dict, tiles: list[Path], clip_path: Path) -> None:
     )
 
 
+def transferred_object_name(url: str) -> str:
+    """Object name Storage Transfer writes for one URL-list entry.
+
+    The service names the object as the host plus the URL path. A tile URL
+    therefore does not land as the file name alone.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or not parsed.path:
+        raise ValueError(f"not an http url: {url}")
+    host = parsed.hostname
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return f"{host}/{parsed.path.lstrip('/')}"
+
+
+def transfer_names(recipe: dict) -> set[str]:
+    return {transferred_object_name(tile_url(recipe, name)) for name in recipe["seed"]["tiles"]}
+
+
+def url_list_tsv(recipe: dict) -> str:
+    """URL list for Storage Transfer. URLs are in UTF-8 lexicographic order."""
+    urls = sorted(tile_url(recipe, name) for name in recipe["seed"]["tiles"])
+    return "TsvHttpData-1.0\n" + "\n".join(urls) + "\n"
+
+
+def relative_names(listing: str, prefix: str) -> set[str]:
+    prefix = seed_prefix(prefix)
+    names = set()
+    for line in listing.splitlines():
+        url = line.strip()
+        if url.startswith(prefix) and not url.endswith("/"):
+            names.add(url[len(prefix) :])
+    return names
+
+
+def already_stored(listing: str, prefix: str, names: set[str]) -> list[str]:
+    return sorted(relative_names(listing, prefix) & names)
+
+
+def list_prefix(prefix: str) -> str:
+    result = subprocess.run(
+        ["gcloud", "storage", "ls", "--recursive", seed_prefix(prefix), f"--project={PROJECT}"],
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        if "matched no objects" in result.stderr:
+            return ""
+        raise SystemExit(result.stderr.strip() or f"could not list {prefix}")
+    return result.stdout
+
+
+def transfer_create_args(list_object: str, destination: str) -> list[str]:
+    return [
+        "transfer",
+        "jobs",
+        "create",
+        list_object,
+        seed_prefix(destination),
+        f"--name={TRANSFER_JOB}",
+        "--description=GLAD cropland 2024 global seed from cropland-2024-v2",
+        "--overwrite-when=never",
+    ]
+
+
+def transfer_agent_grant_args() -> list[str]:
+    """Let the transfer agent read the URL list and write this bucket.
+
+    The job destination is the version 2 prefix. The command refuses the
+    version 1 path before it grants this role.
+    """
+    return [
+        "storage",
+        "buckets",
+        "add-iam-policy-binding",
+        "gs://nature-watch-bucket",
+        f"--member=serviceAccount:{TRANSFER_AGENT}",
+        "--role=roles/storage.legacyBucketWriter",
+    ]
+
+
+def print_transfer_followup() -> None:
+    print(
+        f"status: gcloud transfer jobs describe {TRANSFER_JOB} --project={PROJECT}",
+        flush=True,
+    )
+    print(
+        "operations: gcloud transfer operations list "
+        f"--job-names={TRANSFER_JOB} --project={PROJECT}",
+        flush=True,
+    )
+    print(
+        "cancel operation: gcloud transfer operations cancel OPERATION "
+        f"--project={PROJECT}",
+        flush=True,
+    )
+    print(
+        f"delete job: gcloud transfer jobs delete {TRANSFER_JOB} --project={PROJECT}",
+        flush=True,
+    )
+
+
+def print_check_followup() -> None:
+    print(
+        "status: gcloud batch jobs describe "
+        f"{CHECK_JOB} --location={REGION} --project={PROJECT}",
+        flush=True,
+    )
+    print(
+        "cancel: gcloud batch jobs delete "
+        f"{CHECK_JOB} --location={REGION} --project={PROJECT}",
+        flush=True,
+    )
+
+
+def gs_to_vsi(gs_path: str) -> str:
+    if not gs_path.startswith("gs://"):
+        raise ValueError(f"not a gs path: {gs_path}")
+    return "/vsigs/" + gs_path[len("gs://") :]
+
+
+def vsi_copy(source: str, dest: str) -> None:
+    incoming = gdal.VSIFOpenL(source, "rb")
+    if incoming is None:
+        raise OSError(f"cannot read {source}")
+    parent = dest.rsplit("/", 1)[0]
+    if parent.startswith("/vsi"):
+        gdal.MkdirRecursive(parent, 0o755)
+    outgoing = gdal.VSIFOpenL(dest, "wb")
+    if outgoing is None:
+        gdal.VSIFCloseL(incoming)
+        raise OSError(f"cannot write {dest}")
+    try:
+        while True:
+            chunk = gdal.VSIFReadL(1, 8 * 1024 * 1024, incoming)
+            if not chunk:
+                break
+            written = gdal.VSIFWriteL(chunk, 1, len(chunk), outgoing)
+            if written != len(chunk):
+                raise OSError(f"short write to {dest}")
+    finally:
+        gdal.VSIFCloseL(incoming)
+        gdal.VSIFCloseL(outgoing)
+
+
+def batch_job(script_prefix: str) -> dict:
+    """One spot VM in europe-west1. Batch deletes it when the task ends.
+
+    The script and recipe are copied to the scratch prefix before submit.
+    The container downloads them and checks one tile at a time. A Cloud
+    Storage mount is not used: the Batch host's root is read-only.
+    """
+    prefix = script_prefix.removeprefix("gs://").rstrip("/")
+    fetch = f"""python3 - << 'PY'
+import json
+import urllib.request
+from pathlib import Path
+request = urllib.request.Request(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    headers={{"Metadata-Flavor": "Google"}},
+)
+token = json.load(urllib.request.urlopen(request))["access_token"]
+
+def download(name, dest):
+    url = "https://storage.googleapis.com/{prefix}/" + name
+    body = urllib.request.Request(url, headers={{"Authorization": "Bearer " + token}})
+    dest.write_bytes(urllib.request.urlopen(body).read())
+
+folder = Path("/tmp/in")
+folder.mkdir(exist_ok=True)
+download("cropland.py", folder / "cropland.py")
+download("recipe.json", folder / "recipe.json")
+PY
+python3 /tmp/in/cropland.py verify --recipe /tmp/in/recipe.json --work /tmp/work
+"""
+    return {
+        "taskGroups": [
+            {
+                "taskCount": "1",
+                "taskSpec": {
+                    "maxRunDuration": CHECK_RUN_SECONDS,
+                    "maxRetryCount": 1,
+                    "computeResource": {"cpuMilli": "2000", "memoryMib": "6144"},
+                    "environment": {"variables": {"CPL_MACHINE_IS_GCE": "YES", BATCH_ENV: "1"}},
+                    "runnables": [
+                        {
+                            "container": {
+                                "imageUri": IMAGE,
+                                "entrypoint": "sh",
+                                "commands": ["-c", fetch],
+                            }
+                        }
+                    ],
+                },
+            }
+        ],
+        "allocationPolicy": {
+            "instances": [
+                {
+                    "policy": {
+                        "machineType": MACHINE,
+                        "provisioningModel": "SPOT",
+                        "bootDisk": {"sizeGb": 30, "type": "pd-balanced"},
+                    }
+                }
+            ],
+            "location": {"allowedLocations": [f"regions/{REGION}"]},
+            "serviceAccount": {"email": SERVICE_ACCOUNT},
+        },
+        "logsPolicy": {"destination": "CLOUD_LOGGING"},
+    }
+
+
+def command_transfer(recipe: dict, work: Path) -> None:
+    require_transfer_recipe(recipe)
+    work.mkdir(parents=True, exist_ok=True)
+    tsv_path = work / "urls.tsv"
+    tsv_path.write_text(url_list_tsv(recipe))
+    destination = seed_prefix(recipe["seed"]["path"])
+    stored = already_stored(list_prefix(destination), destination, transfer_names(recipe))
+    if stored:
+        preview = ", ".join(stored[:3])
+        raise SystemExit(
+            f"{len(stored)} tiles are already in {destination} ({preview}). "
+            "The transfer does not overwrite them."
+        )
+    gcloud(["services", "enable", "storagetransfer.googleapis.com"])
+    gcloud(transfer_agent_grant_args())
+    list_object = gs_join(SCRATCH, "urls.tsv")
+    upload(tsv_path, list_object)
+    print(" ".join(["gcloud", *transfer_create_args(list_object, destination)]), flush=True)
+    gcloud(transfer_create_args(list_object, destination))
+    print(f"submitted {TRANSFER_JOB}", flush=True)
+    print(f"url list {list_object}", flush=True)
+    print(f"destination {destination}", flush=True)
+    print_transfer_followup()
+
+
+def command_verify(recipe: dict, work: Path) -> None:
+    """Check every listed tile. The first failure stops the run. No clip is written."""
+    if os.environ.get(BATCH_ENV) != "1":
+        raise SystemExit(
+            "The check runs next to the bucket in europe-west1. "
+            "From this computer, use: python seed/cropland.py check"
+        )
+    require_transfer_recipe(recipe)
+    work.mkdir(parents=True, exist_ok=True)
+    gdal.SetCacheMax(512 * 1024 * 1024)
+    infos = []
+    destination = recipe["seed"]["path"]
+    tiles = recipe["seed"]["tiles"]
+    for index, name in enumerate(tiles, start=1):
+        source = gs_join(destination, transferred_object_name(tile_url(recipe, name)))
+        dest = work / name
+        try:
+            print(f"read {index}/{len(tiles)} {source}", flush=True)
+            vsi_copy(gs_to_vsi(source), str(dest))
+            info = inspect_raster(dest)
+        finally:
+            if dest.exists():
+                dest.unlink()
+        problems = check_tile(info, recipe)
+        print_raster(name, info)
+        if problems:
+            raise SystemExit(f"{name} failed the recipe check:\n" + "\n".join(problems))
+        infos.append(info)
+    problems = check_tiles(infos, recipe)
+    if problems:
+        raise SystemExit("Tiles failed the recipe check:\n" + "\n".join(problems))
+    print(f"checked {len(infos)} tiles", flush=True)
+
+
+def command_check(recipe: dict) -> None:
+    require_transfer_recipe(recipe)
+    destination = seed_prefix(recipe["seed"]["path"])
+    missing = transfer_names(recipe) - relative_names(list_prefix(destination), destination)
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} tiles are not in {destination} yet. "
+            "Wait for the transfer to finish before the check."
+        )
+    gcloud(["services", "enable", "batch.googleapis.com"])
+    work = ROOT / "data" / "seed" / recipe["id"]
+    work.mkdir(parents=True, exist_ok=True)
+    recipe_json = work / "recipe.json"
+    recipe_json.write_text(json.dumps(recipe) + "\n")
+    upload(Path(__file__).resolve(), gs_join(SCRATCH, "cropland.py"))
+    upload(recipe_json, gs_join(SCRATCH, "recipe.json"))
+    config = batch_job(SCRATCH)
+    config_path = work / "batch_job.json"
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    print(config_path.read_text(), flush=True)
+    gcloud(["batch", "jobs", "submit", CHECK_JOB, f"--location={REGION}", f"--config={config_path}"])
+    print(f"submitted {CHECK_JOB} in {REGION}", flush=True)
+    print_check_followup()
+
+
+def gcloud(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(["gcloud", *args, f"--project={PROJECT}"], check=True, text=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("sample", "fetch", "clip", "upload", "run"))
+    parser.add_argument(
+        "command",
+        choices=("sample", "fetch", "clip", "upload", "run", "transfer", "check", "verify"),
+    )
     parser.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
-    parser.add_argument("--work", type=Path, default=DEFAULT_WORK)
+    parser.add_argument("--work", type=Path, default=None)
     args = parser.parse_args()
     started = time.perf_counter()
     recipe = load_recipe(args.recipe)
-    work = args.work
-    work.mkdir(parents=True, exist_ok=True)
+    if args.command in ("sample", "fetch", "clip", "upload", "run"):
+        require_laptop_recipe(recipe)
+    if args.work is not None:
+        work = args.work
+    elif args.command in ("transfer", "check", "verify"):
+        work = ROOT / "data" / "seed" / recipe["id"]
+    else:
+        work = DEFAULT_WORK
 
     if args.command == "sample":
+        work.mkdir(parents=True, exist_ok=True)
         command_sample(recipe, work)
     elif args.command == "fetch":
+        work.mkdir(parents=True, exist_ok=True)
         command_fetch(recipe, work)
     elif args.command == "clip":
+        work.mkdir(parents=True, exist_ok=True)
         tiles = [work / name for name in recipe["seed"]["tiles"]]
         missing = [path.name for path in tiles if not path.exists()]
         if missing:
@@ -522,7 +884,14 @@ def main() -> None:
         tiles = [work / name for name in recipe["seed"]["tiles"]]
         clip_path = work / recipe["seed"]["clip"]["file"]
         command_upload(recipe, tiles, clip_path)
+    elif args.command == "transfer":
+        command_transfer(recipe, work)
+    elif args.command == "check":
+        command_check(recipe)
+    elif args.command == "verify":
+        command_verify(recipe, work)
     else:
+        work.mkdir(parents=True, exist_ok=True)
         tiles = command_fetch(recipe, work)
         clip_path = command_clip(recipe, work, tiles)
         command_upload(recipe, tiles, clip_path)
