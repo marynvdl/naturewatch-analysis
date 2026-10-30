@@ -184,22 +184,24 @@ def test_an_existing_tile_is_recognised_and_a_marker_is_not():
 
 
 def test_the_transfer_job_does_not_overwrite_and_does_not_target_version_1():
-    args = cropland.transfer_create_args(
+    body = cropland.transfer_job_body(
         "gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv",
         GLOBAL["seed"]["path"],
     )
-    assert args[:4] == [
-        "transfer",
-        "jobs",
-        "create",
-        "gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv",
-    ]
-    assert args[4] == "gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/"
-    assert "--overwrite-when=never" in args
-    assert f"--name={cropland.TRANSFER_JOB}" in args
-    grant = cropland.transfer_agent_grant_args()
-    assert f"--member=serviceAccount:{cropland.TRANSFER_AGENT}" in grant
-    assert "--role=roles/storage.legacyBucketWriter" in grant
+    spec = body["transferSpec"]
+    assert spec["httpDataSource"]["listUrl"].endswith("/urls.tsv")
+    assert spec["gcsDataSink"] == {
+        "bucketName": "nature-watch-bucket",
+        "path": "seeds/cropland/glad/2024/v2/",
+    }
+    assert spec["transferOptions"]["overwriteWhen"] == "NEVER"
+    assert body["name"] == f"transferJobs/{cropland.TRANSFER_JOB}"
+    assert "v1" not in spec["gcsDataSink"]["path"]
+    grants = cropland.transfer_agent_grants()
+    roles = [grant[-1] for grant in grants]
+    assert all(f"--member=serviceAccount:{cropland.TRANSFER_AGENT}" in grant for grant in grants)
+    assert "--role=roles/storage.legacyBucketWriter" in roles
+    assert "--role=roles/storage.objectViewer" in roles
 
 
 def test_the_transfer_refuses_the_version_1_recipe():

@@ -31,6 +31,7 @@ import resource
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -647,32 +648,73 @@ def list_prefix(prefix: str) -> str:
     return result.stdout
 
 
-def transfer_create_args(list_object: str, destination: str) -> list[str]:
-    return [
-        "transfer",
-        "jobs",
-        "create",
-        list_object,
-        seed_prefix(destination),
-        f"--name={TRANSFER_JOB}",
-        "--description=GLAD cropland 2024 global seed from cropland-2024-v2",
-        "--overwrite-when=never",
-    ]
+def transfer_job_body(list_object: str, destination: str) -> dict:
+    """A private URL list. This gcloud version treats gs:// as a bucket source."""
+    bucket, prefix = split_gs(seed_prefix(destination))
+    return {
+        "name": f"transferJobs/{TRANSFER_JOB}",
+        "description": "GLAD cropland 2024 global seed from cropland-2024-v2",
+        "status": "ENABLED",
+        "projectId": PROJECT,
+        "transferSpec": {
+            "httpDataSource": {"listUrl": list_object},
+            "gcsDataSink": {"bucketName": bucket, "path": prefix},
+            "transferOptions": {"overwriteWhen": "NEVER"},
+        },
+    }
 
 
-def transfer_agent_grant_args() -> list[str]:
-    """Let the transfer agent read the URL list and write this bucket.
+def user_access_token() -> str:
+    result = subprocess.run(
+        ["gcloud", "auth", "print-access-token"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    token = result.stdout.strip()
+    if not token:
+        raise SystemExit("gcloud auth print-access-token returned an empty token")
+    return token
 
-    The job destination is the version 2 prefix. The command refuses the
-    version 1 path before it grants this role.
+
+def create_transfer_job(list_object: str, destination: str) -> dict:
+    body = transfer_job_body(list_object, destination)
+    request = urllib.request.Request(
+        "https://storagetransfer.googleapis.com/v1/transferJobs",
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + user_access_token(),
+            "Content-Type": "application/json",
+            "x-goog-user-project": PROJECT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode()
+        raise SystemExit(f"transfer job was not created: {error.code} {detail}") from error
+
+
+def transfer_agent_grants() -> list[list[str]]:
+    """Let the transfer agent read the URL list and write the version 2 prefix.
+
+    Legacy bucket writer does not include storage.objects.get. The private URL
+    list and an overwrite setting of never both need that read.
     """
+    member = f"--member=serviceAccount:{TRANSFER_AGENT}"
+    roles = ("roles/storage.legacyBucketWriter", "roles/storage.objectViewer")
     return [
-        "storage",
-        "buckets",
-        "add-iam-policy-binding",
-        "gs://nature-watch-bucket",
-        f"--member=serviceAccount:{TRANSFER_AGENT}",
-        "--role=roles/storage.legacyBucketWriter",
+        [
+            "storage",
+            "buckets",
+            "add-iam-policy-binding",
+            "gs://nature-watch-bucket",
+            member,
+            f"--role={role}",
+        ]
+        for role in roles
     ]
 
 
@@ -945,12 +987,13 @@ def command_transfer(recipe: dict, work: Path) -> None:
             "The transfer does not overwrite them."
         )
     gcloud(["services", "enable", "storagetransfer.googleapis.com"])
-    gcloud(transfer_agent_grant_args())
+    for grant in transfer_agent_grants():
+        gcloud(grant)
     list_object = gs_join(SCRATCH, "urls.tsv")
     upload(tsv_path, list_object)
-    print(" ".join(["gcloud", *transfer_create_args(list_object, destination)]), flush=True)
-    gcloud(transfer_create_args(list_object, destination))
-    print(f"submitted {TRANSFER_JOB}", flush=True)
+    created = create_transfer_job(list_object, destination)
+    print(json.dumps(created, indent=2), flush=True)
+    print(f"submitted {created.get('name', TRANSFER_JOB)}", flush=True)
     print(f"url list {list_object}", flush=True)
     print(f"destination {destination}", flush=True)
     print_transfer_followup()

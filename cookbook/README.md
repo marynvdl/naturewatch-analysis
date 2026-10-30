@@ -63,6 +63,8 @@ Two prefix markers in `nature-watch-bucket`, 49 bytes each, 98 bytes stored in t
 
 ## Expected seed storage for cropland 2024 global
 
-The version 1 prefix is 150,779,952 bytes, which includes the 49-byte `.keep` marker. The clip is 38,478,988 bytes. The six 10° tiles are 112,300,915 bytes. For 223 tiles that is 112,300,915 × 223 / 6, or 4,173,850,674 bytes and 1/6 byte. The recorded expectation is 4,173,850,674 bytes. Compressed sizes on the publisher’s index are not equal, so this scales the version 1 total. It is not a measured sum of the 223 files.
+The version 1 prefix is 150,779,952 bytes, which includes the 49-byte `.keep` marker. The clip is 38,478,988 bytes. The six 10° tiles are 112,300,915 bytes. For 223 tiles that is 112,300,915 × 223 / 6, or 4,173,850,674 bytes and 1/6 byte. The recorded expectation before the transfer was 4,173,850,674 bytes. Compressed sizes on the publisher’s index are not equal, so this scaled the version 1 total. It was not a measured sum of the 223 files.
+
+The transfer on 30 October 2026 stored 5,289,882,209 bytes. The run record is [`seed/README.md`](../seed/README.md).
 
 The sprout and the PMTiles archive are later steps. They are not in this figure.
