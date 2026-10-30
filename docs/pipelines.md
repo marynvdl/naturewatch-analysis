@@ -74,6 +74,10 @@ There is no pipeline orchestrator in this release. Each job is started by hand. 
 
 The crop, built, and bare virtual-machine tasks are retired. Their folders and workflow files are in `archive/vm-tile-tasks/`. Those workflows are not in `.github/workflows/`, and they do not start a machine. The dams Mapbox recipe is in `archive/mapbox-dams/`. The map still reads the existing tileset.
 
+## Direction for the sprout step
+
+Decided on 30 October 2026, not built. A later year writes one Sprout COG per geographic tile, with full-resolution classes only and no maximum or `q3` overviews. The Tiles step owns resampling, and Facts and Tiles read the collection of tiles, for example through a VRT. Each tile is resumable. Compression is benchmarked first. The reasons and open questions are in [`sprout/README.md`](../sprout/README.md). The version 2 global COG is written as one file this year.
+
 ## Fetch
 
 The South Africa seed was fetched on a laptop. `seed/cropland.py` downloaded the GLAD tiles in small ranges, because that server closes long connections, checked them, cut the clip, and uploaded the result.
