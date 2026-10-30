@@ -28,7 +28,7 @@ def load_recipes():
 def test_the_catalog_lists_the_cropland_and_places_recipes():
     loaded = load_recipes()
     assert [name for name, _ in loaded] == [
-        "cropland-2024-global.yaml",
+        "cropland-2024-v2.yaml",
         "cropland-2024.yaml",
         "places-protected-areas.yaml",
     ]
@@ -93,8 +93,8 @@ def tile_sort_key(name):
 
 
 def test_the_global_recipe_names_version_2_and_every_source_tile():
-    recipe = dict(load_recipes())["cropland-2024-global.yaml"]
-    assert recipe["id"] == "cropland-2024-global"
+    recipe = dict(load_recipes())["cropland-2024-v2.yaml"]
+    assert recipe["id"] == "cropland-2024-v2"
     assert recipe["year"] == 2024
     assert recipe["extent"] == "global"
     assert recipe["source"]["download"] == "https://glad.umd.edu/datasets/annual-croplands/2024/"

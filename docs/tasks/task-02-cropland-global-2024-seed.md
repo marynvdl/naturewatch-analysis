@@ -10,7 +10,7 @@ After approval, transfer the tiles named in the recipe into the version 2 seed p
 
 ## Facts already stored
 
-Task 01 adds `cookbook/recipes/cropland-2024-global.yaml`. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The South Africa seed stays at `seeds/cropland/glad/2024/v1/`.
+Task 01 adds `cookbook/recipes/cropland-2024-v2.yaml`. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The South Africa seed stays at `seeds/cropland/glad/2024/v1/`.
 
 `seed/cropland.py` downloads tiles on a laptop in small ranges, checks them, cuts a mainland clip, and uploads. That laptop path is the version 1 run. `docs/pipelines.md` says the global fetch is a Storage Transfer Service job in project `nature-watch-387210`, started by hand, from a URL list built from the recipe. The transfer does not check pixels. A GDAL job next to the bucket checks the grid and the class values.
 

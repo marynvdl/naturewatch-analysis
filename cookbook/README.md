@@ -21,8 +21,9 @@ Ids:
 
 - Seed: `seed-<product>-<source>-<year>-v<n>`, for example `seed-cropland-glad-2024-v1`
 - Sprout: `<product>-<year>-v<n>`, for example `cropland-2024-v1`
+- Recipe file and recipe id: the sprout id, for example `recipes/cropland-2024-v2.yaml` with id `cropland-2024-v2`
 
-A version is a folder, so the next version can sit beside this one. Recipes stay as a flat list of files until a product has a second year.
+A version is a folder, so the next version can sit beside this one. A new raster recipe uses the sprout id as its file name and its id. A new source year is a new sprout id, such as `cropland-2025-v1`. `recipes/cropland-2024.yaml` is the version 1 South Africa record and keeps that name. While two versions of a year are both read, both files stay in `recipes/`. When a version is no longer read, move its recipe out of `recipes/`. A place archive keeps its own file name, such as `places-protected-areas.yaml`.
 
 ## Adding a recipe
 
@@ -36,9 +37,9 @@ Read one sample before the bulk download. The sample is the smallest piece the p
 
 `sprout/cropland.py` writes the sprout file from the seed clip. Its classes are 1 for cropland, 0 for other land, and 255 for nodata, including land outside South Africa. `tiles/cropland.py` reads that sprout and writes class-value tiles for zooms 0–12. The tile prefix is on the recipe. Seed value 100 is cropland and maps to sprout value 1. Seed value 0 is everything else and maps to sprout value 0. Clip value 255 is nodata and stays 255. The source tiles set no nodata value. `seed/cropland.py` downloads the tiles, checks them, and writes a mainland South Africa clip under the seed path. Pixels outside that boundary are 255 in the clip. That 255 is not a GLAD code.
 
-## cropland-2024-global
+## cropland-2024-v2
 
-`recipes/cropland-2024-global.yaml` names the global GLAD annual cropland 2024 seed and sprout. `cropland-2024.yaml` stays the version 1 record. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The seed tiles are the 223 files on the publisher’s 2024 index, read on 30 October 2026. There is no country clip. A 10° tile that index does not list is absent. Inside a listed tile, 0 stays other land.
+`recipes/cropland-2024-v2.yaml` names the global GLAD annual cropland 2024 seed and sprout. Its id is `cropland-2024-v2`, the same as its sprout id. `cropland-2024.yaml` stays the version 1 record. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The seed tiles are the 223 files on the publisher’s 2024 index, read on 30 October 2026. There is no country clip. A 10° tile that index does not list is absent. Inside a listed tile, 0 stays other land.
 
 The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`, id `cropland-2024-v2`. Source 100 maps to 1 and source 0 maps to 0. The display object is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, scheme `pmtiles`, encoding class-value. Resampling is unset.
 

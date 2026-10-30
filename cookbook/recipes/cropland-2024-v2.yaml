@@ -1,7 +1,7 @@
 # Hand-edited catalog for the global layer year.
 # Facts and tiles read sprout.path. That object is the published raster.
 # There is no country clip. A 10° tile the publisher does not offer is absent.
-id: cropland-2024-global
+id: cropland-2024-v2
 title: GLAD annual cropland 2024
 source:
   name: GLAD annual cropland
