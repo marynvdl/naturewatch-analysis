@@ -10,7 +10,7 @@ After approval, write the version 2 Cloud Optimized GeoTIFF and its static STAC 
 
 ## Facts already stored
 
-Task 02 puts the checked GLAD tiles at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The global recipe names sprout `cropland-2024-v2` at `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`.
+Task 02 puts the checked GLAD tiles at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The 2024 check stored each tile as the file name alone, for example `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. A later year keeps the Storage Transfer host path. The global recipe names sprout `cropland-2024-v2` at `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`.
 
 `sprout/cropland.py` reads the South Africa clip, remaps `0` to `0`, `100` to `1`, and `255` to `255`, and writes one COG plus a static STAC Collection and Item. Overviews use maximum. Nodata is ignored, so one cropland pixel survives in a coarse cell. Area counts use the full-resolution pixels. The published run is a hand-started Batch job in `europe-west1` on a spot `e2-standard-2` with a 30 GB disk. The version 1 COG is 39,337,060 bytes. Batch deletes the virtual machine when the task ends.
 
