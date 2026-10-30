@@ -2,11 +2,15 @@
 """Write the cropland sprout: one COG and the static STAC files beside it.
 
 The recipe is the catalog. This script reads it and does not edit it.
-Seed value 0 becomes 0, seed value 100 becomes 1, and the clip's 255 stays
-nodata. The published run is a Batch job in europe-west1. The laptop only
-submits that job.
+Seed value 0 becomes 0 and seed value 100 becomes 1. The South Africa clip
+also maps 255 to nodata. The global recipe has no clip: the sprout mosaics
+the checked tiles, and a tile the publisher does not offer stays nodata.
+
+The published run is a Batch job in europe-west1. The laptop only submits
+that job.
 
   python sprout/cropland.py submit
+  python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from osgeo import gdal, osr
 
@@ -110,11 +115,27 @@ def raster_facts(path: Path) -> dict:
     return facts
 
 
+def raster_frame(path: Path) -> dict:
+    """Grid only. A histogram of the global mosaic is a separate full read."""
+    dataset = gdal.Open(str(path))
+    band = dataset.GetRasterBand(1)
+    nodata = band.GetNoDataValue()
+    frame = {
+        "width": dataset.RasterXSize,
+        "height": dataset.RasterYSize,
+        "transform": dataset.GetGeoTransform(),
+        "projection": dataset.GetProjection(),
+        "nodata": None if nodata is None else int(nodata),
+    }
+    dataset = None
+    return frame
+
+
 def require_mapped(counts: dict[int, int], recipe: dict) -> None:
     table = mapping(recipe)
     extra = sorted(set(counts) - set(table))
     if extra:
-        raise ValueError(f"clip values {extra} are not in sprout.from_seed")
+        raise ValueError(f"source values {extra} are not in sprout.from_seed")
     published = set(published_values(recipe).values())
     bad = sorted(dst for dst in table.values() if dst not in published)
     if bad:
@@ -262,7 +283,7 @@ def write_max_overviews(source: Path, work: Path) -> list[Path]:
 
 
 def write_cog_vrt(source: Path, overviews: list[Path], dest: Path, recipe: dict) -> None:
-    facts = raster_facts(source)
+    facts = raster_frame(source)
     geo = ", ".join(f"{value:.12g}" for value in facts["transform"])
     overview_xml = "\n".join(
         f"""    <Overview>
@@ -323,7 +344,7 @@ def write_cog(source: Path, overviews: list[Path], dest: Path, recipe: dict) -> 
     )
 
 
-def check_sprout(clip: dict, sprout: dict, recipe: dict) -> list[str]:
+def check_sprout(source: dict, sprout: dict, recipe: dict) -> list[str]:
     problems = []
     values = published_values(recipe)
     if sprout["layout"] != "COG":
@@ -338,16 +359,26 @@ def check_sprout(clip: dict, sprout: dict, recipe: dict) -> list[str]:
         problems.append(f"version is {sprout['version']}, path says {version_of(recipe)}")
     if sprout["class_values"] != class_values_text(recipe):
         problems.append(f"class values are {sprout['class_values']}")
-    if sprout["width"] != clip["width"] or sprout["height"] != clip["height"]:
-        problems.append(f"size is {sprout['width']}×{sprout['height']}, clip is {clip['width']}×{clip['height']}")
-    if sprout["transform"] != clip["transform"]:
-        problems.append("geotransform changed between the clip and the sprout")
+    if sprout["width"] != source["width"] or sprout["height"] != source["height"]:
+        problems.append(
+            f"size is {sprout['width']}×{sprout['height']}, source is {source['width']}×{source['height']}"
+        )
+    if sprout["transform"] != source["transform"]:
+        problems.append("geotransform changed between the source and the sprout")
     if abs(sprout["pixel_size_deg"] - float(recipe["grid"]["pixel_size_deg"])) > 1e-12:
         problems.append(f"pixel size is {sprout['pixel_size_deg']}")
-    expected = expected_counts(clip["counts"], recipe)
+    expected = expected_counts(source["counts"], recipe)
+    accounted = sum(expected.values())
+    total = sprout["width"] * sprout["height"]
+    gap = total - accounted
+    # A clip's nodata is already in from_seed. A mosaic's missing tiles are not.
+    if gap < 0:
+        problems.append(f"source counts cover {accounted} pixels of {total}")
+    elif gap:
+        expected[values["nodata"]] = expected.get(values["nodata"], 0) + gap
     if sprout["counts"] != expected:
         problems.append(f"counts are {sprout['counts']}, expected {expected}")
-    if overview_sizes(clip["width"], clip["height"]) and sprout["overviews"] < 1:
+    if overview_sizes(source["width"], source["height"]) and sprout["overviews"] < 1:
         problems.append("COG has no overviews")
     return problems
 
@@ -365,6 +396,159 @@ def write_sprout(clip: Path, dest: Path, recipe: dict, work: Path | None = None)
     if problems:
         raise ValueError("sprout failed the recipe check:\n" + "\n".join(problems))
     return clip_facts, sprout_facts
+
+
+def pixel_offset(delta: float, pixel: float) -> int:
+    value = delta / pixel
+    nearest = round(value)
+    if abs(value - nearest) > 1e-4:
+        raise ValueError(f"offset is {value} pixels, not a whole pixel")
+    return int(nearest)
+
+
+def boxes_overlap(one: tuple[int, int, int, int], other: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = one
+    bx, by, bw, bh = other
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+def mosaic_canvas(frames: list[dict], pixel: float) -> dict:
+    """Union of the tile windows. A gap between tiles is left uncovered."""
+    minx = min(frame["transform"][0] for frame in frames)
+    maxy = max(frame["transform"][3] for frame in frames)
+    maxx = max(frame["transform"][0] + frame["transform"][1] * frame["width"] for frame in frames)
+    miny = min(frame["transform"][3] + frame["transform"][5] * frame["height"] for frame in frames)
+    width = pixel_offset(maxx - minx, pixel)
+    height = pixel_offset(maxy - miny, pixel)
+    placed = []
+    for frame in frames:
+        xoff = pixel_offset(frame["transform"][0] - minx, pixel)
+        yoff = pixel_offset(maxy - frame["transform"][3], pixel)
+        box = (xoff, yoff, frame["width"], frame["height"])
+        if xoff < 0 or yoff < 0 or xoff + frame["width"] > width or yoff + frame["height"] > height:
+            raise ValueError(f"{Path(frame['path']).name} falls outside the mosaic")
+        for earlier in placed:
+            if boxes_overlap(box, earlier[0]):
+                raise ValueError(
+                    f"{Path(frame['path']).name} overlaps {Path(earlier[1]['path']).name}"
+                )
+        placed.append((box, frame))
+    return {
+        "width": width,
+        "height": height,
+        "transform": (minx, pixel, 0.0, maxy, 0.0, -pixel),
+        "placed": placed,
+        "projection": frames[0]["projection"],
+    }
+
+
+def check_source_tile(facts: dict, recipe: dict, path: Path) -> None:
+    if facts["transform"][2] != 0 or facts["transform"][4] != 0:
+        raise ValueError(f"{path.name} is rotated or sheared")
+    if facts["transform"][5] >= 0:
+        raise ValueError(f"{path.name} is not north-up")
+    if facts["crs"] != recipe["grid"]["crs"]:
+        raise ValueError(f"{path.name} CRS is {facts['crs']}, recipe says {recipe['grid']['crs']}")
+    if facts["dtype"] != recipe["grid"]["dtype"]:
+        raise ValueError(f"{path.name} dtype is {facts['dtype']}, recipe says {recipe['grid']['dtype']}")
+    pixel = float(recipe["grid"]["pixel_size_deg"])
+    if abs(facts["pixel_size_deg"] - pixel) > 1e-12:
+        raise ValueError(f"{path.name} pixel size is {facts['pixel_size_deg']}, recipe says {pixel}")
+    counted = sum(facts["counts"].values())
+    if counted != facts["width"] * facts["height"]:
+        raise ValueError(f"{path.name} counted {counted} pixels of {facts['width'] * facts['height']}")
+    require_mapped(facts["counts"], recipe)
+
+
+def write_mosaic_vrt(canvas: dict, dest: Path, recipe: dict) -> None:
+    pairs = ",".join(f"{src}:{dst}" for src, dst in sorted(mapping(recipe).items()))
+    nodata = published_values(recipe)["nodata"]
+    geo = ", ".join(f"{value:.12g}" for value in canvas["transform"])
+    sources = []
+    for (xoff, yoff, width, height), frame in canvas["placed"]:
+        sources.append(
+            f"""    <ComplexSource>
+      <SourceFilename relativeToVRT="0">{xml_escape(str(frame["path"]))}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>
+      <DstRect xOff="{xoff}" yOff="{yoff}" xSize="{width}" ySize="{height}"/>
+      <LUT>{pairs}</LUT>
+    </ComplexSource>"""
+        )
+    width = canvas["width"]
+    height = canvas["height"]
+    body = "\n".join(sources)
+    dest.write_text(
+        f"""<VRTDataset rasterXSize="{width}" rasterYSize="{height}">
+  <SRS>{xml_escape(canvas["projection"])}</SRS>
+  <GeoTransform>{geo}</GeoTransform>
+  <VRTRasterBand dataType="Byte" band="1">
+    <NoDataValue>{nodata}</NoDataValue>
+{body}
+  </VRTRasterBand>
+</VRTDataset>
+"""
+    )
+
+
+def write_mosaic_sprout(
+    tile_paths: list[Path | str], dest: Path, recipe: dict, work: Path
+) -> tuple[dict, dict]:
+    """Mosaic checked tiles, remap with from_seed, and write one COG.
+
+    Pixels in the union window that no tile covers stay nodata. An unmapped
+    source value stops the run before the COG is written.
+    """
+    if not tile_paths:
+        raise ValueError("the recipe names no tiles")
+    work.mkdir(parents=True, exist_ok=True)
+    gdal.SetCacheMax(512 * 1024 * 1024)
+    # A mosaic of hundreds of tiles must not keep every source decoded at once.
+    gdal.SetConfigOption("GDAL_MAX_DATASET_POOL_SIZE", "2")
+    frames = []
+    counts: dict[int, int] = {}
+    for index, tile_path in enumerate(tile_paths, start=1):
+        path = Path(tile_path)
+        print(f"read {index}/{len(tile_paths)} {tile_path}", flush=True)
+        facts = raster_facts(path)
+        check_source_tile(facts, recipe, path)
+        facts["path"] = tile_path
+        frames.append(facts)
+        for value, count in facts["counts"].items():
+            counts[value] = counts.get(value, 0) + count
+    pixel = float(recipe["grid"]["pixel_size_deg"])
+    canvas = mosaic_canvas(frames, pixel)
+    vrt = work / "mosaic.vrt"
+    write_mosaic_vrt(canvas, vrt, recipe)
+    remapped = work / "remapped.tif"
+    if remapped.exists():
+        remapped.unlink()
+    gdal.Translate(
+        str(remapped),
+        str(vrt),
+        format="GTiff",
+        noData=published_values(recipe)["nodata"],
+        creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2", "TILED=YES", "BIGTIFF=IF_SAFER", "NUM_THREADS=ALL_CPUS"],
+        callback=_progress("mosaic"),
+    )
+    grid = raster_frame(remapped)
+    if grid["width"] != canvas["width"] or grid["height"] != canvas["height"]:
+        raise ValueError(
+            f"mosaic is {grid['width']}×{grid['height']}, expected {canvas['width']}×{canvas['height']}"
+        )
+    overviews = write_max_overviews(remapped, work)
+    write_cog(remapped, overviews, dest, recipe)
+    sprout_facts = raster_facts(dest)
+    source_facts = {
+        "width": grid["width"],
+        "height": grid["height"],
+        "transform": grid["transform"],
+        "counts": counts,
+    }
+    problems = check_sprout(source_facts, sprout_facts, recipe)
+    if problems:
+        raise ValueError("sprout failed the recipe check:\n" + "\n".join(problems))
+    return source_facts, sprout_facts
 
 
 def stac_names(recipe: dict) -> tuple[str, str]:
@@ -515,6 +699,90 @@ def delete_scratch(prefix: str) -> None:
             print(f"scratch object left in place: {gs_join(prefix, name)}", flush=True)
 
 
+def scratch_prefix(recipe: dict) -> str:
+    return f"gs://nature-watch-bucket/scratch/sprout/{recipe['id']}/"
+
+
+def job_shape(recipe: dict) -> dict:
+    """Machine size for this recipe.
+
+    The clip job is the version 1 shape. The global mosaic keeps the
+    compressed working files, about 30 GB, on a 100 GB disk so a worse
+    compression ratio still fits. One source tile is 1.6 GB uncompressed,
+    so the machine has 16 GB of RAM.
+    """
+    if "clip" in recipe["seed"]:
+        return {
+            "machine": MACHINE,
+            "cpu_milli": "2000",
+            "memory_mib": "6144",
+            "disk_gb": 30,
+            "max_run_seconds": 10800,
+        }
+    return {
+        "machine": "e2-standard-4",
+        "cpu_milli": "4000",
+        "memory_mib": "12288",
+        "disk_gb": 100,
+        "max_run_seconds": 43200,
+    }
+
+
+def require_destination(recipe: dict) -> None:
+    path = recipe["sprout"]["path"]
+    if "clip" not in recipe["seed"] and path.endswith("/cropland-2024-zaf.tif"):
+        raise SystemExit(f"refusing to write the version 1 sprout: {path}")
+
+
+def tile_url(recipe: dict, name: str) -> str:
+    base = recipe["source"]["download"]
+    if not base.endswith("/"):
+        base += "/"
+    return base + name
+
+
+def transferred_object_name(url: str) -> str:
+    """Object name Storage Transfer writes. The host plus the URL path."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or not parsed.path:
+        raise ValueError(f"not an http url: {url}")
+    host = parsed.hostname
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return f"{host}/{parsed.path.lstrip('/')}"
+
+
+def tile_object_name(tile: str, url: str, present: set[str]) -> str:
+    """Object to mosaic. The host path wins. A flat name is only the 2024 move."""
+    if "/" in tile or tile in ("", ".", ".."):
+        raise ValueError(f"tile name is not a flat file name: {tile}")
+    nested = transferred_object_name(url)
+    if nested in present:
+        return nested
+    if tile in present:
+        return tile
+    raise SystemExit(f"missing {tile}")
+
+
+def vsi_exists(path: str) -> bool:
+    try:
+        return gdal.VSIStatL(path) is not None
+    except RuntimeError:
+        return False
+
+
+def resolve_tile(recipe: dict, name: str) -> str:
+    prefix = recipe["seed"]["path"]
+    url = tile_url(recipe, name)
+    nested = transferred_object_name(url)
+    present: set[str] = set()
+    if vsi_exists(gs_to_vsi(gs_join(prefix, nested))):
+        present.add(nested)
+    if name != nested and vsi_exists(gs_to_vsi(gs_join(prefix, name))):
+        present.add(name)
+    return gs_join(prefix, tile_object_name(name, url, present))
+
+
 def materialize_clip(recipe: dict, work: Path) -> Path:
     name = recipe["seed"]["clip"]["file"]
     dest = work / name
@@ -527,13 +795,15 @@ def materialize_clip(recipe: dict, work: Path) -> Path:
     return dest
 
 
-def batch_job(script_prefix: str) -> dict:
+def batch_job(script_prefix: str, shape: dict | None = None) -> dict:
     """One spot VM in europe-west1. Batch deletes it when the task ends.
 
     The script and recipe are copied to the scratch prefix before submit.
     The container downloads them. A Cloud Storage mount is not used: the
     Batch host's root is read-only, so creating a mount directory fails.
     """
+    if shape is None:
+        shape = job_shape({"id": "cropland-2024", "seed": {"clip": {}}, "sprout": {"path": ""}})
     prefix = script_prefix.removeprefix("gs://").rstrip("/")
     fetch = f"""python3 - << 'PY'
 import json
@@ -562,10 +832,20 @@ python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json --work /tmp/work --
             {
                 "taskCount": "1",
                 "taskSpec": {
-                    "maxRunDuration": "10800s",
+                    "maxRunDuration": f"{shape['max_run_seconds']}s",
                     "maxRetryCount": 1,
-                    "computeResource": {"cpuMilli": "2000", "memoryMib": "6144"},
-                    "environment": {"variables": {"CPL_MACHINE_IS_GCE": "YES", BATCH_ENV: "1"}},
+                    "computeResource": {
+                        "cpuMilli": shape["cpu_milli"],
+                        "memoryMib": shape["memory_mib"],
+                    },
+                    "environment": {
+                        "variables": {
+                            "CPL_MACHINE_IS_GCE": "YES",
+                            BATCH_ENV: "1",
+                            "GDAL_CACHEMAX": "512",
+                            "GDAL_MAX_DATASET_POOL_SIZE": "2",
+                        }
+                    },
                     "runnables": [
                         {
                             "container": {
@@ -582,9 +862,9 @@ python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json --work /tmp/work --
             "instances": [
                 {
                     "policy": {
-                        "machineType": MACHINE,
+                        "machineType": shape["machine"],
                         "provisioningModel": "SPOT",
-                        "bootDisk": {"sizeGb": 30, "type": "pd-balanced"},
+                        "bootDisk": {"sizeGb": shape["disk_gb"], "type": "pd-balanced"},
                     }
                 }
             ],
@@ -603,16 +883,33 @@ def upload_with_gcloud(local: Path, destination: str) -> None:
     gcloud(["storage", "cp", str(local), destination])
 
 
+def print_job_followup(job_id: str) -> None:
+    print(
+        f"status: gcloud batch jobs describe {job_id} --location={REGION} --project={PROJECT}",
+        flush=True,
+    )
+    print(
+        f"cancel: gcloud batch jobs delete {job_id} --location={REGION} --project={PROJECT}",
+        flush=True,
+    )
+    print(f"output: see sprout.path in the recipe", flush=True)
+
+
 def command_run(recipe: dict, work: Path, upload: bool, scratch: str | None) -> None:
     if os.environ.get(BATCH_ENV) != "1":
         raise SystemExit(
             "The sprout run is the Batch job in europe-west1. "
             "From this computer, use: python sprout/cropland.py submit"
         )
+    require_destination(recipe)
     work.mkdir(parents=True, exist_ok=True)
-    clip = materialize_clip(recipe, work)
     cog = work / Path(recipe["sprout"]["path"]).name
-    _clip_facts, sprout_facts = write_sprout(clip, cog, recipe, work)
+    if "clip" in recipe["seed"]:
+        clip = materialize_clip(recipe, work)
+        _source_facts, sprout_facts = write_sprout(clip, cog, recipe, work)
+    else:
+        paths = [gs_to_vsi(resolve_tile(recipe, name)) for name in recipe["seed"]["tiles"]]
+        _source_facts, sprout_facts = write_mosaic_sprout(paths, cog, recipe, work)
     stac_paths = write_stac(recipe, sprout_facts, work)
     print(f"cog_bytes {cog.stat().st_size}", flush=True)
     print(f"overviews {sprout_facts['overviews']}", flush=True)
@@ -625,7 +922,10 @@ def command_run(recipe: dict, work: Path, upload: bool, scratch: str | None) -> 
 
 def command_submit(recipe_path: Path) -> None:
     recipe = load_recipe(recipe_path)
+    require_destination(recipe)
     job_id = recipe["sprout"]["id"]
+    shape = job_shape(recipe)
+    prefix = scratch_prefix(recipe)
     gcloud(["services", "enable", "batch.googleapis.com"])
     existing = subprocess.run(
         ["gcloud", "storage", "ls", recipe["sprout"]["path"], f"--project={PROJECT}"],
@@ -638,14 +938,21 @@ def command_submit(recipe_path: Path) -> None:
     work.mkdir(parents=True, exist_ok=True)
     recipe_json = work / "recipe.json"
     recipe_json.write_text(json.dumps(recipe) + "\n")
-    upload_with_gcloud(Path(__file__).resolve(), gs_join(SCRATCH, "cropland.py"))
-    upload_with_gcloud(recipe_json, gs_join(SCRATCH, "recipe.json"))
-    config = batch_job(SCRATCH)
+    upload_with_gcloud(Path(__file__).resolve(), gs_join(prefix, "cropland.py"))
+    upload_with_gcloud(recipe_json, gs_join(prefix, "recipe.json"))
+    config = batch_job(prefix, shape)
     config_path = work / "batch_job.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     print(config_path.read_text(), flush=True)
+    print(
+        f"job {job_id}: spot {shape['machine']} disk {shape['disk_gb']} GB "
+        f"memory {shape['memory_mib']} MiB limit {shape['max_run_seconds']}s",
+        flush=True,
+    )
     gcloud(["batch", "jobs", "submit", job_id, f"--location={REGION}", f"--config={config_path}"])
     print(f"submitted {job_id} in {REGION}", flush=True)
+    print(f"output {recipe['sprout']['path']}", flush=True)
+    print_job_followup(job_id)
 
 
 def peak_memory_bytes() -> int:
