@@ -6,7 +6,6 @@ import array
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import quote
 
 import yaml
 from osgeo import gdal, osr
@@ -125,36 +124,26 @@ def test_the_url_list_names_every_global_tile_in_order():
     assert "https://glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif" in urls
 
 
-def test_a_checked_tile_is_stored_as_the_flat_file_name():
+def test_a_checked_tile_stays_on_the_host_path():
     url = "https://glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif"
     nested = cropland.transferred_object_name(url)
     assert nested == "glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif"
     assert cropland.transferred_object_name("https://glad.umd.edu:443/a.tif") == "glad.umd.edu:443/a.tif"
-    plan = cropland.tile_plan("20S_020E.tif", url, {nested, ".keep"})
-    stored = cropland.gs_join(GLOBAL["seed"]["path"], plan.move_to)
-    assert stored == "gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif"
-    assert "glad.umd.edu" not in stored
+    assert cropland.tile_object_name("20S_020E.tif", url, {nested, ".keep"}) == nested
+    stored = cropland.gs_join(GLOBAL["seed"]["path"], nested)
+    assert stored == (
+        "gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/"
+        "glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif"
+    )
     assert "/2024/v1/" not in stored
-
-    already_flat = cropland.tile_plan("20S_020E.tif", url, {"20S_020E.tif"})
-    assert already_flat.read_name == "20S_020E.tif"
-    assert already_flat.move_to is None
-    assert already_flat.delete_name is None
-
-    leftover = cropland.tile_plan("20S_020E.tif", url, {"20S_020E.tif", nested})
-    assert leftover.read_name == "20S_020E.tif"
-    assert leftover.move_to is None
-    assert leftover.delete_name == nested
+    # The 2024 check moves files. A later check can still read a flat name.
+    assert cropland.tile_object_name("20S_020E.tif", url, {"20S_020E.tif"}) == "20S_020E.tif"
+    assert cropland.tile_object_name("20S_020E.tif", url, {"20S_020E.tif", nested}) == nested
 
 
-def test_the_flat_move_does_not_overwrite_and_encodes_the_host_path():
+def test_a_tile_is_present_on_either_the_host_path_or_the_flat_name():
     source = "seeds/cropland/glad/2024/v2/glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif"
     dest = "seeds/cropland/glad/2024/v2/20S_020E.tif"
-    url = cropland.rewrite_url("nature-watch-bucket", source, dest, None)
-    assert "ifGenerationMatch=0" in url
-    assert quote(source, safe="") in url
-    assert quote(dest, safe="") in url
-    assert "/2024/v1/" not in url
     names = cropland.names_from_list_page(
         {"items": [{"name": source}, {"name": dest}, {"name": "seeds/cropland/glad/2024/v2/.keep"}]},
         "seeds/cropland/glad/2024/v2/",

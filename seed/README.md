@@ -51,11 +51,11 @@ All six tiles are `EPSG:4326`, `0.00025°`, uint8, with no nodata flag. Every pi
 
 Run on 30 October 2026. The transfer is finished. The check is submitted and has not finished.
 
-`transfer` read `cookbook/recipes/cropland-2024-v2.yaml`, wrote a URL list, and submitted one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. Storage Transfer writes each object as the source host plus the URL path. `check` then reads those objects. A listed tile that fails stops the run and is left on the host path. A tile that passes is moved to the file name alone, and the host path is deleted. There is no country clip and no clip file.
+`transfer` read `cookbook/recipes/cropland-2024-v2.yaml`, wrote a URL list, and submitted one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. Storage Transfer writes each object as the source host plus the URL path. Later checks read that object and leave it there. There is no country clip and no clip file.
 
-The kept name, after the check passes, is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. Until that move, the transferred object is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif`. The version 1 prefix is not a destination. The transfer uses overwrite never, and the move refuses to replace a flat file that already exists.
+The 2024 check `seed-cropland-glad-2024-v2` was already submitted with the move. A tile that passes that job is kept at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. The object it reads first is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif`. The version 1 prefix is not a destination.
 
-The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket, checks it, and deletes the local copy. The move is a same-bucket rewrite. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`.
+The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket and deletes the local copy. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`. The 2024 job also rewrites each tile that passes onto the flat file name and deletes the host path. A later check does not.
 
 The transfer command grants `roles/storage.legacyBucketWriter` and `roles/storage.objectViewer` on `nature-watch-bucket` to `project-637146989512@storage-transfer-service.iam.gserviceaccount.com`. The writer role does not include object reads. The private URL list and the never-overwrite check need `storage.objects.get`.
 
@@ -80,4 +80,4 @@ The estimate before the run was 4,173,850,674 bytes, from [`cookbook/README.md`]
 
 The successful operation started at `2026-10-30T09:58:08Z` and ended at `2026-10-30T10:02:32Z`, 264 seconds. An earlier operation, `transferOperations/transferJobs-cropland-2024-v2-seed-15313645261421247161`, failed with `PERMISSION_DENIED` and copied nothing. The transfer service does not report peak memory. No virtual machine was started for the transfer, and none was left running. The version 1 seed was not changed.
 
-The check `seed-cropland-glad-2024-v2` was submitted at `2026-10-30T11:15:57Z`. Its wall time and peak memory are not known until it finishes. It rewrites each tile that passes onto the flat file name and deletes the host path, so one copy remains. The check uses the version 1 grid and class rules.
+The check `seed-cropland-glad-2024-v2` was submitted at `2026-10-30T11:15:57Z`. Its wall time and peak memory are not known until it finishes. That job rewrites each tile that passes onto the flat file name and deletes the host path. The check uses the version 1 grid and class rules.

@@ -11,10 +11,10 @@ That laptop path is the version 1 command. It refuses a recipe with no clip.
 
 The global recipe is two other commands. `transfer` writes a URL list from the
 recipe and submits a Storage Transfer Service job into `seed.path`. The service
-first writes each object as the source host plus the URL path. `check` submits
-a GDAL check on a spot machine in europe-west1. A tile that passes is moved to
-the flat file name, and the host path is deleted. Neither command downloads the
-tile set to the laptop, and neither writes a clip.
+writes each object as the source host plus the URL path, and the check leaves
+that path in place. `check` submits a GDAL check on a spot machine in
+europe-west1. Neither command downloads the tile set to the laptop, and neither
+writes a clip.
 
 Examples
   python seed/cropland.py sample
@@ -549,21 +549,11 @@ def command_upload(recipe: dict, tiles: list[Path], clip_path: Path) -> None:
     )
 
 
-@dataclass(frozen=True)
-class TilePlan:
-    """Where to read one tile, and how to leave it as a flat file name."""
-
-    tile: str
-    read_name: str
-    move_to: str | None
-    delete_name: str | None
-
-
 def transferred_object_name(url: str) -> str:
-    """Temporary object name Storage Transfer writes for one URL-list entry.
+    """Object name Storage Transfer writes for one URL-list entry.
 
     The service names the object as the host plus the URL path. The check
-    moves a tile that passes to the file name alone and deletes this path.
+    reads that object and leaves it there.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or not parsed.path:
@@ -578,20 +568,16 @@ def transfer_names(recipe: dict) -> set[str]:
     return {transferred_object_name(tile_url(recipe, name)) for name in recipe["seed"]["tiles"]}
 
 
-def tile_plan(tile: str, url: str, present: set[str]) -> TilePlan:
-    """Read the host path until the flat file exists. A failed tile is not moved."""
+def tile_object_name(tile: str, url: str, present: set[str]) -> str:
+    """Object to check. The host path wins. A flat name is only the 2024 move."""
     if "/" in tile or tile in ("", ".", ".."):
         raise ValueError(f"tile name is not a flat file name: {tile}")
     nested = transferred_object_name(url)
-    has_flat = tile in present
-    has_nested = nested in present
-    if not has_flat and not has_nested:
-        raise SystemExit(f"missing {tile}")
-    if has_flat and has_nested:
-        return TilePlan(tile, tile, None, nested)
-    if has_flat:
-        return TilePlan(tile, tile, None, None)
-    return TilePlan(tile, nested, tile, None)
+    if nested in present:
+        return nested
+    if tile in present:
+        return tile
+    raise SystemExit(f"missing {tile}")
 
 
 def missing_tiles(recipe: dict, present: set[str]) -> list[str]:
@@ -761,33 +747,6 @@ def split_gs(gs_path: str) -> tuple[str, str]:
     return bucket, name
 
 
-def rewrite_url(bucket: str, source: str, dest: str, rewrite_token: str | None) -> str:
-    """Same-bucket rewrite that fails if the flat name already exists."""
-    url = (
-        "https://storage.googleapis.com/storage/v1/b/"
-        + quote(bucket, safe="")
-        + "/o/"
-        + quote(source, safe="")
-        + "/rewriteTo/b/"
-        + quote(bucket, safe="")
-        + "/o/"
-        + quote(dest, safe="")
-        + "?ifGenerationMatch=0"
-    )
-    if rewrite_token:
-        url += "&rewriteToken=" + quote(rewrite_token, safe="")
-    return url
-
-
-def delete_url(bucket: str, name: str) -> str:
-    return (
-        "https://storage.googleapis.com/storage/v1/b/"
-        + quote(bucket, safe="")
-        + "/o/"
-        + quote(name, safe="")
-    )
-
-
 def list_page_url(bucket: str, prefix: str, page_token: str | None) -> str:
     url = (
         "https://storage.googleapis.com/storage/v1/b/"
@@ -845,33 +804,6 @@ def list_gcs_names(gs_prefix: str, token: str) -> set[str]:
         page = payload.get("nextPageToken")
         if not page:
             return names
-
-
-def delete_gcs_object(gs_path: str, token: str) -> None:
-    bucket, name = split_gs(gs_path)
-    gcs_api("DELETE", delete_url(bucket, name), token)
-
-
-def move_gcs_object(source: str, dest: str, token: str) -> None:
-    """Rewrite one object onto its flat name, then delete the host path."""
-    bucket, source_name = split_gs(source)
-    dest_bucket, dest_name = split_gs(dest)
-    if bucket != dest_bucket:
-        raise ValueError(f"refusing to move across buckets: {source} -> {dest}")
-    rewrite_token = None
-    while True:
-        payload = gcs_api(
-            "POST",
-            rewrite_url(bucket, source_name, dest_name, rewrite_token),
-            token,
-            body=b"{}",
-        )
-        if payload.get("done"):
-            break
-        rewrite_token = payload.get("rewriteToken")
-        if not rewrite_token:
-            raise OSError(f"rewrite of {source} did not finish")
-    delete_gcs_object(source, token)
 
 
 def gs_to_vsi(gs_path: str) -> str:
@@ -1013,10 +945,10 @@ def command_verify(recipe: dict, work: Path) -> None:
     destination = recipe["seed"]["path"]
     tiles = recipe["seed"]["tiles"]
     present = list_gcs_names(destination, metadata_token())
-    plans = [tile_plan(name, tile_url(recipe, name), present) for name in tiles]
-    for index, plan in enumerate(plans, start=1):
-        source = gs_join(destination, plan.read_name)
-        dest = work / plan.tile
+    for index, name in enumerate(tiles, start=1):
+        object_name = tile_object_name(name, tile_url(recipe, name), present)
+        source = gs_join(destination, object_name)
+        dest = work / name
         try:
             print(f"read {index}/{len(tiles)} {source}", flush=True)
             vsi_copy(gs_to_vsi(source), str(dest))
@@ -1025,18 +957,9 @@ def command_verify(recipe: dict, work: Path) -> None:
             if dest.exists():
                 dest.unlink()
         problems = check_tile(info, recipe)
-        print_raster(plan.tile, info)
+        print_raster(name, info)
         if problems:
-            raise SystemExit(f"{plan.tile} failed the recipe check:\n" + "\n".join(problems))
-        if plan.move_to or plan.delete_name:
-            token = metadata_token()
-            if plan.move_to:
-                flat = gs_join(destination, plan.move_to)
-                move_gcs_object(source, flat, token)
-                print(f"moved {plan.tile} to {flat}", flush=True)
-            else:
-                delete_gcs_object(gs_join(destination, plan.delete_name), token)
-                print(f"removed host path for {plan.tile}", flush=True)
+            raise SystemExit(f"{name} failed the recipe check:\n" + "\n".join(problems))
         infos.append(info)
     problems = check_tiles(infos, recipe)
     if problems:
