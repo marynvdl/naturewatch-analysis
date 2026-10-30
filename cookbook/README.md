@@ -15,7 +15,7 @@ Fire exports stay at `gs://nature-watch-bucket/COGS/fire/`. The 2015 and 2019 cr
 | Tiles | `gs://nature-watch-tiles/<product>/<year>/v<n>/{z}/{x}/{y}.png` |
 | Places | `gs://nature-watch-tiles/places/<type>/v<n>/places.pmtiles` |
 
-The sprout object is the published raster. Facts count its class pixels. Tiles are built from it and written to `nature-watch-tiles`. The static STAC files for a version go in that same `v<n>/` prefix and point at the sprout. There is no separate published copy.
+The sprout object is the published raster. Facts count its class pixels. Tiles are built from it and written to `nature-watch-tiles`. A recipe can name one PMTiles archive instead of the `{z}/{x}/{y}.png` pattern. The static STAC files for a version go in that same `v<n>/` prefix and point at the sprout. There is no separate published copy.
 
 Ids:
 
@@ -36,6 +36,14 @@ Read one sample before the bulk download. The sample is the smallest piece the p
 
 `sprout/cropland.py` writes the sprout file from the seed clip. Its classes are 1 for cropland, 0 for other land, and 255 for nodata, including land outside South Africa. `tiles/cropland.py` reads that sprout and writes class-value tiles for zooms 0–12. The tile prefix is on the recipe. Seed value 100 is cropland and maps to sprout value 1. Seed value 0 is everything else and maps to sprout value 0. Clip value 255 is nodata and stays 255. The source tiles set no nodata value. `seed/cropland.py` downloads the tiles, checks them, and writes a mainland South Africa clip under the seed path. Pixels outside that boundary are 255 in the clip. That 255 is not a GLAD code.
 
+## cropland-2024-global
+
+`recipes/cropland-2024-global.yaml` names the global GLAD annual cropland 2024 seed and sprout. `cropland-2024.yaml` stays the version 1 record. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The seed tiles are the 223 files on the publisher’s 2024 index, read on 30 October 2026. There is no country clip. A 10° tile that index does not list is absent. Inside a listed tile, 0 stays other land.
+
+The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`, id `cropland-2024-v2`. Source 100 maps to 1 and source 0 maps to 0. The display object is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, scheme `pmtiles`, encoding class-value. Resampling is unset.
+
+`20S_020E.tif` was opened on 22 October 2026, before the other South Africa tiles. Every pixel is 0 or 100, and the file sets no nodata value. That file is on the 2024 index. The publisher’s page names only value 100. The recipe keeps the sample.
+
 ## places-protected-areas
 
 `recipes/places-protected-areas.yaml` names the protected-area PMTiles archive. It is not a raster year. `places/protected_areas.py` reads `places.geom` and the stored cropland percent from the app database and writes `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. The map paints the layer in the client. A later place type adds another recipe and another object path.
@@ -50,4 +58,10 @@ Dependencies are listed in `requirements.txt`.
 
 ## Cost for this step
 
-Two prefix markers in `nature-watch-bucket`, 49 bytes each, 98 bytes stored in total. No raster was downloaded or written. No virtual machine was started. Wall time and peak memory do not apply to a catalog step.
+Two prefix markers in `nature-watch-bucket`, 49 bytes each, 98 bytes stored in total. No raster was downloaded or written. No virtual machine was started. Wall time and peak memory do not apply to a catalog step. Adding the global recipe stored no further objects. No transfer was started and no Batch job was submitted.
+
+## Expected seed storage for cropland 2024 global
+
+The version 1 prefix is 150,779,952 bytes, which includes the 49-byte `.keep` marker. The clip is 38,478,988 bytes. The six 10° tiles are 112,300,915 bytes. For 223 tiles that is 112,300,915 × 223 / 6, or 4,173,850,674 bytes and 1/6 byte. The recorded expectation is 4,173,850,674 bytes. Compressed sizes on the publisher’s index are not equal, so this scales the version 1 total. It is not a measured sum of the 223 files.
+
+The sprout and the PMTiles archive are later steps. They are not in this figure.
