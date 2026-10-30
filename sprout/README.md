@@ -48,7 +48,9 @@ Two earlier submits failed in a few seconds while the container was being mounte
 
 ## cropland 2024 global
 
-Submitted on 30 October 2026. The job is `cropland-2024-v2` in `europe-west1`, uid `cropland-2024-v2-f7c0999b-b228-424f-80`. It was queued at `2026-10-30T13:05:15Z`. Bytes stored, wall time, and peak memory wait until it finishes.
+The first submit, uid `cropland-2024-v2-f7c0999b-b228-424f-80`, was queued at `2026-10-30T13:05:15Z` and failed at `2026-10-30T13:29:10Z`. It had read all 223 tiles. GDAL then stopped because the dataset pool was 2, which is below the worker thread count. No COG was written, and the virtual machine was removed.
+
+Submitted again at `2026-10-30T15:06:21Z` as the same job name, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`. The dataset pool is 239, one handle per tile plus the worker threads. Decoded pixels stay in the 512 MB cache. Bytes stored, wall time, and peak memory wait until it finishes.
 
 `submit --recipe cookbook/recipes/cropland-2024-v2.yaml` reads `cookbook/recipes/cropland-2024-v2.yaml` and mosaics the 223 checked tiles under `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. A tile on the Storage Transfer host path is used when both copies exist. The flat file name is the 2024 copy. There is no country clip. A 10° tile the publisher does not offer stays nodata. `0` becomes `0` and `100` becomes `1`. Any other value stops the run before the COG is written. `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` is not a destination.
 
@@ -73,7 +75,7 @@ gcloud batch jobs delete cropland-2024-v2 --location=europe-west1 --project=natu
 
 ## Expected cost
 
-Approved on 30 October 2026, then submitted as `cropland-2024-v2`.
+Approved on 30 October 2026. The first run failed before upload. The replacement job is `cropland-2024-v2`, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`.
 
 The version 1 disk was 30 GB for a 39 MB COG. This job is sized from the global seed instead.
 

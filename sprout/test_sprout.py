@@ -284,6 +284,8 @@ def test_the_global_job_is_a_larger_spot_machine_and_keeps_version_1():
     spec = job["taskGroups"][0]["taskSpec"]
     assert spec["maxRunDuration"] == "43200s"
     assert spec["computeResource"] == {"cpuMilli": "4000", "memoryMib": "12288"}
+    pool = spec["environment"]["variables"]["GDAL_MAX_DATASET_POOL_SIZE"]
+    assert int(pool) >= len(GLOBAL["seed"]["tiles"])
     script = spec["runnables"][0]["container"]["commands"][1]
     assert "scratch/sprout/cropland-2024-v2/" in script
     assert "cropland-2024-zaf" not in script

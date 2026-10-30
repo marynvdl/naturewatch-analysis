@@ -503,8 +503,8 @@ def write_mosaic_sprout(
         raise ValueError("the recipe names no tiles")
     work.mkdir(parents=True, exist_ok=True)
     gdal.SetCacheMax(512 * 1024 * 1024)
-    # A mosaic of hundreds of tiles must not keep every source decoded at once.
-    gdal.SetConfigOption("GDAL_MAX_DATASET_POOL_SIZE", "2")
+    # Handles for every tile. The block cache, not this pool, bounds decoded pixels.
+    gdal.SetConfigOption("GDAL_MAX_DATASET_POOL_SIZE", str(dataset_pool_size(len(tile_paths))))
     frames = []
     counts: dict[int, int] = {}
     for index, tile_path in enumerate(tile_paths, start=1):
@@ -703,6 +703,15 @@ def scratch_prefix(recipe: dict) -> str:
     return f"gs://nature-watch-bucket/scratch/sprout/{recipe['id']}/"
 
 
+def dataset_pool_size(tile_count: int) -> int:
+    """Open dataset handles. Must cover every source tile and the worker threads.
+
+    Decoded pixels stay in the 512 MB block cache. A pool of 2 is below the
+    thread count, so GDAL stops when the mosaic opens.
+    """
+    return max(16, tile_count + 16)
+
+
 def job_shape(recipe: dict) -> dict:
     """Machine size for this recipe.
 
@@ -711,6 +720,7 @@ def job_shape(recipe: dict) -> dict:
     compression ratio still fits. One source tile is 1.6 GB uncompressed,
     so the machine has 16 GB of RAM.
     """
+    pool = str(dataset_pool_size(len(recipe["seed"].get("tiles") or [])))
     if "clip" in recipe["seed"]:
         return {
             "machine": MACHINE,
@@ -718,6 +728,7 @@ def job_shape(recipe: dict) -> dict:
             "memory_mib": "6144",
             "disk_gb": 30,
             "max_run_seconds": 10800,
+            "dataset_pool_size": pool,
         }
     return {
         "machine": "e2-standard-4",
@@ -725,6 +736,7 @@ def job_shape(recipe: dict) -> dict:
         "memory_mib": "12288",
         "disk_gb": 100,
         "max_run_seconds": 43200,
+        "dataset_pool_size": pool,
     }
 
 
@@ -843,7 +855,7 @@ python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json --work /tmp/work --
                             "CPL_MACHINE_IS_GCE": "YES",
                             BATCH_ENV: "1",
                             "GDAL_CACHEMAX": "512",
-                            "GDAL_MAX_DATASET_POOL_SIZE": "2",
+                            "GDAL_MAX_DATASET_POOL_SIZE": shape["dataset_pool_size"],
                         }
                     },
                     "runnables": [
