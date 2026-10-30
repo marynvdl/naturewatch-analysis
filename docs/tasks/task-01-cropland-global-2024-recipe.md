@@ -16,7 +16,7 @@ Add the global recipe beside the South Africa recipe, name every GLAD 10° tile,
 
 ## Do this
 
-- Add `cookbook/recipes/cropland-2024-global.yaml`. Leave `cropland-2024.yaml` as the version 1 record.
+- Add `cookbook/recipes/cropland-2024-v2.yaml`. Leave `cropland-2024.yaml` as the version 1 record.
 - Set the seed id to `seed-cropland-glad-2024-v2` and the seed path to `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`.
 - Set the sprout id to `cropland-2024-v2` and the sprout path to `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`. Classes stay 1 cropland, 0 other land, 255 nodata. Source 100 maps to 1, source 0 maps to 0.
 - Set the tiles path to `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, scheme `pmtiles`, encoding class-value. Leave resampling unset until task 04. The South Africa recipe used `max`. `q3` is still open.

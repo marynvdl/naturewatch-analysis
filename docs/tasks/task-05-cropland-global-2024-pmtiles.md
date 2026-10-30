@@ -10,7 +10,7 @@ After the sample is approved, write zooms 0–12 to the version 2 PMTiles object
 
 ## Facts already stored
 
-Task 04 sets the resampling on `cookbook/recipes/cropland-2024-global.yaml` and proves the PMTiles command on a small window. The archive path is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`. The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`.
+Task 04 sets the resampling on `cookbook/recipes/cropland-2024-v2.yaml` and proves the PMTiles command on a small window. The archive path is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`. The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif`.
 
 Version 1 tiles stay at `gs://nature-watch-tiles/cropland/2024/v1/`. The app still reads that PNG template until task 07 in naturewatch-app. This task publishes the object. It does not change the app.
 
