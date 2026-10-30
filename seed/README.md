@@ -49,11 +49,11 @@ All six tiles are `EPSG:4326`, `0.00025°`, uint8, with no nodata flag. Every pi
 
 ## cropland 2024 global
 
-`transfer` reads `cookbook/recipes/cropland-2024-v2.yaml`, writes a URL list, and submits one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. `check` submits the GDAL check after every listed tile is in that prefix. The check uses the version 1 grid and class rules. A listed tile that fails stops the run. There is no country clip and no clip file.
+`transfer` reads `cookbook/recipes/cropland-2024-v2.yaml`, writes a URL list, and submits one Storage Transfer Service job into `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The job is not on a schedule. Storage Transfer first writes each object as the source host plus the URL path. `check` submits the GDAL check after every listed tile is in that prefix, either under that temporary path or already as a flat file name. The check uses the version 1 grid and class rules. A listed tile that fails stops the run and is left on the host path. A tile that passes is moved to the file name alone, and the host path is deleted. There is no country clip and no clip file.
 
-Storage Transfer names each object as the source host plus the URL path. `20S_020E.tif` lands at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/glad.umd.edu/datasets/annual-croplands/2024/20S_020E.tif`. The version 1 prefix is not a destination. The transfer uses `--overwrite-when=never` and refuses to start when one of those objects is already there.
+`20S_020E.tif` is kept at `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/20S_020E.tif`. The version 1 prefix is not a destination. The transfer uses `--overwrite-when=never` and refuses to start when a flat file or a host-path copy is already there. The move also refuses to replace a flat file that already exists.
 
-The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket, checks it, and deletes the local copy. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`.
+The check is one spot `e2-standard-2` in `europe-west1` with a 30 GB disk and a 12 hour limit. It reads one tile at a time from the bucket, checks it, and deletes the local copy. The move is a same-bucket rewrite, so the bytes are not copied through the virtual machine. Batch deletes the virtual machine when the task ends. The URL list stays at `gs://nature-watch-bucket/scratch/seed/cropland-2024-v2/urls.tsv`.
 
 `glad.umd.edu/robots.txt` does not disallow `/datasets/`. The version 1 download already used Range requests on this server.
 
@@ -81,6 +81,6 @@ Do not run those until the expected cost below is approved. `check` refuses to s
 
 The expected seed storage is 4,173,850,674 bytes, from [`cookbook/README.md`](../cookbook/README.md). That scales the six version 1 tiles (112,300,915 bytes) to 223 tiles. It is not a measured sum of the 223 files. The sprout and the PMTiles archive are later steps.
 
-Storage Transfer Service does not charge for an agentless URL-list transfer. The bucket will store those bytes in `nature-watch-bucket` (EU). The transfer also writes about 223 objects, one Class A write per tile, and reads the URL list, one Class B read per tile. A larger tile can take more than one write. The URL list itself is a few kilobytes in the scratch prefix.
+Storage Transfer Service does not charge for an agentless URL-list transfer. The bucket will store those bytes in `nature-watch-bucket` (EU). The transfer writes about 223 objects, one Class A write per tile, and reads the URL list, one Class B read per tile. A larger tile can take more than one write. The check then rewrites each tile onto its flat file name and deletes the host path, one rewrite and one delete per tile, in the same bucket. After that delete, one copy remains. The URL list itself is a few kilobytes in the scratch prefix.
 
 The check has not started, so its wall time and peak memory are not measured. No virtual machine was started for this step, and none was left running. The version 1 seed was not changed.

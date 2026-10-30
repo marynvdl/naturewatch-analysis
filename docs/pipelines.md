@@ -80,7 +80,7 @@ The South Africa seed was fetched on a laptop. `seed/cropland.py` downloaded the
 
 A later global year fetches with a Storage Transfer Service job in project `nature-watch-387210`. The job is started by hand and is not on a schedule. Its source is a URL list built from the recipe. Its destination is that recipe’s seed path. Google writes the objects into the bucket. The laptop is not on the path.
 
-The transfer does not check pixels. Storage Transfer names each object as the source host plus the URL path, under the recipe seed path. After the transfer finishes, a GDAL job next to the bucket checks the grid and the class values. A listed tile that fails stops that job. The global recipe has no clip. The South Africa clip was written on the laptop. Both jobs are started by hand.
+The transfer does not check pixels. Storage Transfer first writes each object as the source host plus the URL path, under the recipe seed path. The GDAL job next to the bucket then checks the grid and the class values. A listed tile that fails stops that job. A tile that passes is moved to the file name alone, and the host path is deleted. The global recipe has no clip. The South Africa clip was written on the laptop. Both jobs are started by hand.
 
 ## Fire, as it runs today
 
