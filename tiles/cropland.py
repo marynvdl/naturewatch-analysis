@@ -64,10 +64,10 @@ def published_values(recipe: dict) -> dict[str, int]:
     return {name: int(value) for name, value in recipe["sprout"]["values"].items()}
 
 
-RESAMPLINGS = ("max", "q3", "q2", "nearest")
+RESAMPLINGS = ("max", "q3", "q2", "nearest", "fraction")
 
 
-def tile_contract(recipe: dict, resampling: str | None = None) -> dict:
+def tile_contract(recipe: dict, resampling: str | None = None, threshold: float | None = None) -> dict:
     """The recipe's tile block. A test can lower max_zoom; the file says 12.
 
     A pmtiles recipe may leave resampling unset until the sample is approved.
@@ -100,6 +100,12 @@ def tile_contract(recipe: dict, resampling: str | None = None) -> dict:
             chosen = resampling
         if chosen is None:
             problems.append("tiles.resampling is unset. Name one with --resampling for a local sample")
+    chosen_threshold = threshold if threshold is not None else tiles.get("threshold")
+    if chosen == "fraction":
+        if chosen_threshold is None or not 0 < float(chosen_threshold) < 1:
+            problems.append("fraction needs a threshold above 0 and below 1 (tiles.threshold or --threshold)")
+    elif chosen_threshold is not None and scheme == "pmtiles":
+        problems.append("a threshold only applies to fraction resampling")
     if tiles.get("encoding") != "class-value":
         problems.append("tiles.encoding must be class-value")
     if int(tiles.get("min_zoom", -1)) != 0:
@@ -122,6 +128,7 @@ def tile_contract(recipe: dict, resampling: str | None = None) -> dict:
         "nodata": 255,
         "classes": (0, 1),
         "resampling": chosen,
+        "threshold": float(chosen_threshold) if chosen == "fraction" else None,
     }
 
 
@@ -354,6 +361,129 @@ def build_pyramid(source: Path, bounds: tuple[float, float, float, float], contr
     return levels
 
 
+# ---- Average then threshold: carry the cropland share, decide once ----------
+
+
+def fraction_tile(source: Path, zoom: int, x: int, y: int, nodata: int) -> np.ndarray | None:
+    """Share of valid source pixels under each tile cell that are cropland, 0 to 1.
+
+    Nodata cells are -1. None when the whole tile is nodata. GDAL average resampling
+    weights each source pixel by its overlap with the cell and leaves nodata out.
+    """
+    dataset = gdal.Warp(
+        "",
+        str(source),
+        format="MEM",
+        outputBounds=tile_bounds_3857(zoom, x, y),
+        width=TILE_SIZE,
+        height=TILE_SIZE,
+        dstSRS="EPSG:3857",
+        resampleAlg="average",
+        outputType=gdal.GDT_Float32,
+        srcNodata=nodata,
+        dstNodata=-1,
+    )
+    share = dataset.GetRasterBand(1).ReadAsArray().astype(np.float32)
+    dataset = None
+    if not np.any(share >= 0):
+        return None
+    return share
+
+
+def reduce_fraction(children: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray] | None:
+    """Parent share and weight from children. Weight is the count of valid zoom 12 cells.
+
+    The parent share is the weighted mean of the child shares, so it equals the share of
+    valid zoom 12 cells under the parent, whatever the zoom.
+    """
+    share = np.zeros((TILE_SIZE * 2, TILE_SIZE * 2), dtype=np.float64)
+    weight = np.zeros((TILE_SIZE * 2, TILE_SIZE * 2), dtype=np.float64)
+    for (dx, dy), (child_share, child_weight) in children.items():
+        rows = slice(dy * TILE_SIZE, (dy + 1) * TILE_SIZE)
+        cols = slice(dx * TILE_SIZE, (dx + 1) * TILE_SIZE)
+        share[rows, cols] = np.where(child_weight > 0, child_share, 0) * child_weight
+        weight[rows, cols] = child_weight
+    total = weight.reshape(TILE_SIZE, 2, TILE_SIZE, 2).sum(axis=(1, 3))
+    mixed = share.reshape(TILE_SIZE, 2, TILE_SIZE, 2).sum(axis=(1, 3))
+    if not np.any(total > 0):
+        return None
+    out = np.where(total > 0, mixed / np.where(total > 0, total, 1), -1).astype(np.float32)
+    return out, total.astype(np.float64)
+
+
+def build_fraction_pyramid(source: Path, bounds: tuple[float, float, float, float], contract: dict) -> dict[int, dict]:
+    """{zoom: {(x, y): (share, weight)}}. Zoom max_zoom is averaged from the source."""
+    top = contract["max_zoom"]
+    levels: dict[int, dict] = {top: {}}
+    for x, y in tiles_covering(bounds, top):
+        share = fraction_tile(source, top, x, y, contract["nodata"])
+        if share is not None:
+            levels[top][(x, y)] = (share, (share >= 0).astype(np.float64))
+    for zoom in range(top - 1, contract["min_zoom"] - 1, -1):
+        groups: dict[tuple[int, int], dict] = {}
+        for (x, y), pair in levels[zoom + 1].items():
+            groups.setdefault((x // 2, y // 2), {})[(x % 2, y % 2)] = pair
+        level = {}
+        for key, children in groups.items():
+            reduced = reduce_fraction(children)
+            if reduced is not None:
+                level[key] = reduced
+        levels[zoom] = level
+    return levels
+
+
+def threshold_levels(fractions: dict[int, dict], threshold: float) -> dict[int, dict]:
+    """Class tiles from shares: cropland when the share is above the threshold."""
+    out: dict[int, dict] = {}
+    for zoom, level in fractions.items():
+        out[zoom] = {}
+        for key, (share, _weight) in level.items():
+            values = np.where(share < 0, NODATA, (share > threshold).astype(np.uint8)).astype(np.uint8)
+            if np.any(values != NODATA):
+                out[zoom][key] = values
+    return out
+
+
+def row_area_km2(zoom: int, y: int) -> np.ndarray:
+    """Area in km2 of one cell for each of the 256 rows of tile row y."""
+    rows = y * TILE_SIZE + np.arange(TILE_SIZE) + 0.5
+    lat = np.arctan(np.sinh(np.pi * (1 - 2 * rows / (TILE_SIZE * 2**zoom))))
+    side = 2 * np.pi * EARTH_RADIUS / (TILE_SIZE * 2**zoom) / 1000.0
+    return (side * np.cos(lat)) ** 2
+
+
+def fidelity(levels: dict[int, dict], fractions: dict[int, dict], zooms: tuple[int, ...]) -> dict:
+    """Judge shown cells against the true cropland share, from the source, at each zoom.
+
+    true_km2       cropland area, share x cell area, summed. The same at every zoom.
+    shown_km2      area of the cells drawn as cropland.
+    recall         share of true cropland area that sits under a drawn cell.
+    precision      share of the drawn area that is cropland.
+    """
+    rows = {}
+    for zoom in zooms:
+        true_area = shown_area = hit_area = 0.0
+        for key, (share, _weight) in fractions.get(zoom, {}).items():
+            area = row_area_km2(zoom, key[1])[:, None]
+            valid = share >= 0
+            cropland = np.where(valid, share, 0) * area
+            true_area += float(cropland.sum())
+            drawn = levels[zoom].get(key)
+            if drawn is None:
+                continue
+            on = drawn == 1
+            shown_area += float((on * area).sum())
+            hit_area += float((cropland * on).sum())
+        rows[zoom] = {
+            "true_km2": true_area,
+            "shown_km2": shown_area,
+            "shown_over_true": shown_area / true_area if true_area else None,
+            "recall": hit_area / true_area if true_area else None,
+            "precision": hit_area / shown_area if shown_area else None,
+        }
+    return rows
+
+
 def tile_png(values: np.ndarray) -> bytes:
     data = values != NODATA
     gray = np.where(data, values, 0).astype(np.uint8)
@@ -512,18 +642,26 @@ def crop_window(source: str, window: tuple[float, float, float, float], dest: Pa
     return dest
 
 
-def build_pmtiles(source: Path, dest: Path, recipe: dict, resampling: str | None = None) -> dict:
-    contract = tile_contract(recipe, resampling)
+def build_pmtiles(
+    source: Path, dest: Path, recipe: dict, resampling: str | None = None, threshold: float | None = None
+) -> dict:
+    contract = tile_contract(recipe, resampling, threshold)
     if contract["scheme"] != "pmtiles":
         raise ValueError("build_pmtiles needs a pmtiles recipe")
     bounds = raster_bounds(source)
     started = time.perf_counter()
-    levels = build_pyramid(source, bounds, contract)
+    if contract["resampling"] == "fraction":
+        fractions = build_fraction_pyramid(source, bounds, contract)
+        levels = threshold_levels(fractions, contract["threshold"])
+    else:
+        fractions = None
+        levels = build_pyramid(source, bounds, contract)
     built = time.perf_counter()
     archive = write_pmtiles(levels, dest, contract, bounds)
     top = contract["max_zoom"]
     stats = {
         "resampling": contract["resampling"],
+        "threshold": contract["threshold"],
         "min_zoom": contract["min_zoom"],
         "max_zoom": top,
         "bounds": bounds,
@@ -538,6 +676,7 @@ def build_pmtiles(source: Path, dest: Path, recipe: dict, resampling: str | None
     stats["_levels"] = levels
     stats["_source"] = source
     stats["_contract"] = contract
+    stats["_fractions"] = fractions
     return stats
 
 
@@ -549,7 +688,7 @@ PREVIEW_HTML = """<!doctype html>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"/>
   <style>
     html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
-    #grid { display: grid; grid-template-columns: repeat(4, 1fr); height: 100%; gap: 2px; }
+    #grid { display: grid; grid-template-columns: repeat(__COUNT__, 1fr); height: 100%; gap: 2px; }
     .pane { position: relative; }
     .pane .map { position: absolute; inset: 0; }
     .label { position: absolute; z-index: 1; left: 8px; top: 8px; background: #fff; padding: 4px 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
@@ -562,7 +701,10 @@ PREVIEW_HTML = """<!doctype html>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
   <script>
-    const names = ["max", "q3", "q2", "nearest"];
+    const all = __NAMES__;
+    const show = new URLSearchParams(location.search).get("show");
+    const names = show ? show.split(",").filter((n) => all.includes(n)) : all;
+    document.getElementById("grid").style.gridTemplateColumns = "repeat(" + names.length + ", 1fr)";
     const center = __CENTER__;
     const protocol = new pmtiles.Protocol();
     // The archive holds class values. This protocol reads a tile by byte range, then colours it.
@@ -685,16 +827,27 @@ class ByteRangeHandler(http.server.SimpleHTTPRequestHandler):
             remaining -= len(chunk)
 
 
+def preview_names(folder: Path) -> list[str]:
+    found = sorted(path.stem for path in folder.glob("*.pmtiles"))
+    first = [name for name in RESAMPLINGS if name in found]
+    return first + [name for name in found if name not in first]
+
+
 def write_preview(folder: Path, center: tuple[float, float]) -> Path:
+    names = preview_names(folder)
     html = folder / "preview.html"
-    html.write_text(PREVIEW_HTML.replace("__CENTER__", json.dumps(list(center))))
+    html.write_text(
+        PREVIEW_HTML.replace("__CENTER__", json.dumps(list(center)))
+        .replace("__NAMES__", json.dumps(names))
+        .replace("__COUNT__", str(max(1, len(names))))
+    )
     return html
 
 
 def command_preview(folder: Path, port: int) -> None:
-    missing = [name for name in RESAMPLINGS if not (folder / f"{name}.pmtiles").exists()]
-    if missing:
-        raise SystemExit(f"no archive for {', '.join(missing)} in {folder}. Run build for each first.")
+    if not preview_names(folder):
+        raise SystemExit(f"no .pmtiles archive in {folder}. Run build first.")
+    write_preview(folder, (18.25, -33.35))
     handler = functools.partial(ByteRangeHandler, directory=str(folder))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"preview http://127.0.0.1:{port}/preview.html", flush=True)
@@ -838,13 +991,15 @@ def command_build_pmtiles(
     resampling: str | None,
     window: tuple[float, float, float, float] | None,
     stats_path: Path | None,
+    threshold: float | None = None,
 ) -> dict:
     started = time.perf_counter()
     work_source = Path(source)
     if window is not None:
         work_source = crop_window(source, window, dest.with_suffix(".window.tif"))
-    stats = build_pmtiles(work_source, dest, recipe, resampling)
+    stats = build_pmtiles(work_source, dest, recipe, resampling, threshold)
     levels = stats.pop("_levels")
+    fractions = stats.pop("_fractions")
     source_path = stats.pop("_source")
     contract = stats.pop("_contract")
     thresholds = {"q3": 0.25, "q2": 0.5}
@@ -852,6 +1007,10 @@ def command_build_pmtiles(
         stats["q3_against_source" if contract["resampling"] == "q3" else "q2_against_source"] = compare_q3_with_source(
             source_path, levels, (8, 6, 4), contract["nodata"], thresholds[contract["resampling"]]
         )
+    if fractions is None:
+        # Judge every choice against the same truth: the share from the source.
+        fractions = build_fraction_pyramid(source_path, stats["bounds"], contract)
+    stats["fidelity"] = fidelity(levels, fractions, tuple(range(contract["max_zoom"], 3, -1)))
     stats["bounds_note"] = "west, south, east, north in degrees"
     stats["wall_seconds"] = round(time.perf_counter() - started, 2)
     stats["peak_memory_bytes"] = peak_memory_bytes()
@@ -954,6 +1113,7 @@ def main() -> None:
     parser.add_argument("--resampling", choices=RESAMPLINGS)
     parser.add_argument("--window", type=float, nargs=4, metavar=("WEST", "SOUTH", "EAST", "NORTH"))
     parser.add_argument("--stats", type=Path)
+    parser.add_argument("--threshold", type=float, help="cropland share above which a fraction cell is drawn")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--scratch", default=None)
     args = parser.parse_args()
@@ -971,7 +1131,7 @@ def main() -> None:
             raise SystemExit("build needs --source and --dest")
         if recipe.get("tiles", {}).get("scheme") == "pmtiles":
             command_build_pmtiles(
-                recipe, str(args.source), args.dest, args.resampling, args.window, args.stats
+                recipe, str(args.source), args.dest, args.resampling, args.window, args.stats, args.threshold
             )
             return
         command_build(recipe, args.source, args.dest)

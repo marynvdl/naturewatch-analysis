@@ -327,3 +327,73 @@ def test_a_byte_range_is_inclusive_and_open_ended_ranges_work():
     assert cropland.parse_byte_range("bytes=90-", 100) == (90, 99, True)
     assert cropland.parse_byte_range("bytes=-10", 100) == (90, 99, True)
     assert cropland.parse_byte_range(None, 100) == (0, 99, False)
+
+
+def test_fraction_needs_a_threshold_between_zero_and_one():
+    for bad in (None, 0, 1, 1.5):
+        try:
+            cropland.tile_contract(V2, "fraction", bad)
+        except ValueError as error:
+            assert "threshold" in str(error)
+        else:
+            raise AssertionError(f"threshold {bad} should be refused")
+    assert cropland.tile_contract(V2, "fraction", 0.35)["threshold"] == 0.35
+    try:
+        cropland.tile_contract(V2, "max", 0.35)
+    except ValueError as error:
+        assert "threshold" in str(error)
+    else:
+        raise AssertionError("a threshold with max should be refused")
+
+
+def share_tile(top_left_value):
+    """A tile whose 2 x 2 blocks each hold the given share in the top left pixel's row."""
+    return np.full((256, 256), top_left_value, dtype=np.float32), np.ones((256, 256))
+
+
+def test_a_parent_share_is_the_weighted_mean_of_its_children():
+    # A parent cell covers a 2 x 2 block of one child, so each quadrant follows its child.
+    full, empty = share_tile(1.0), share_tile(0.0)
+    gap = (np.full((256, 256), -1.0, dtype=np.float32), np.zeros((256, 256)))
+    share, weight = cropland.reduce_fraction({(0, 0): full, (1, 0): empty, (0, 1): gap})
+    assert np.allclose(share[:128, :128], 1.0) and np.allclose(share[:128, 128:], 0.0)
+    assert np.allclose(share[128:, :128], -1.0) and np.allclose(weight[128:, :128], 0)
+    assert np.allclose(weight[:128, :128], 4)
+    # A cell with mixed children: one child tile where half the pixels are cropland.
+    half = np.zeros((256, 256), dtype=np.float32)
+    half[:, ::2] = 1.0
+    share, _ = cropland.reduce_fraction({(0, 0): (half, np.ones((256, 256)))})
+    assert np.allclose(share[:128, :128], 0.5)
+    # The share survives two levels. Thresholding at 0.4 each time would not keep 0.25.
+    quarter = np.zeros((256, 256), dtype=np.float32)
+    quarter[::2, ::2] = 1.0
+    level1 = cropland.reduce_fraction({(0, 0): (quarter, np.ones((256, 256)))})
+    assert np.allclose(level1[0][:128, :128], 0.25)
+    level2 = cropland.reduce_fraction({(0, 0): level1})
+    assert np.allclose(level2[0][:64, :64], 0.25)
+
+
+def test_a_fraction_pyramid_equals_the_share_taken_from_the_source(tmp_path):
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    recipe = pmtiles_recipe(5)
+    contract = cropland.tile_contract(recipe, "fraction", 0.25)
+    fractions = cropland.build_fraction_pyramid(source, cropland.raster_bounds(source), contract)
+    for zoom in (4, 2):
+        direct = cropland.q3_from_source(source, zoom, sorted(fractions[zoom]), 255, 0.25)
+        classes = cropland.threshold_levels(fractions, 0.25)[zoom]
+        assert set(direct) == set(classes)
+        for key in direct:
+            both = (direct[key] != 255) & (classes[key] != 255)
+            assert (direct[key][both] != classes[key][both]).mean() < 0.02
+
+
+def test_fidelity_is_perfect_when_the_levels_are_the_thresholded_shares(tmp_path):
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    contract = cropland.tile_contract(pmtiles_recipe(4), "fraction", 0.5)
+    fractions = cropland.build_fraction_pyramid(source, cropland.raster_bounds(source), contract)
+    levels = cropland.threshold_levels(fractions, 0.5)
+    rows = cropland.fidelity(levels, fractions, (4, 3))
+    assert rows[4]["true_km2"] > 0
+    assert 0 <= rows[4]["recall"] <= 1 and 0 <= rows[4]["precision"] <= 1
