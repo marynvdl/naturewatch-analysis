@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-"""Write the cropland sprout: one COG and the static STAC files beside it.
+"""Write the cropland sprout: COGs and the static STAC files beside them.
 
 The recipe is the catalog. This script reads it and does not edit it.
 Seed value 0 becomes 0 and seed value 100 becomes 1. The South Africa clip
-also maps 255 to nodata. The global recipe has no clip: the sprout mosaics
-the checked tiles, and a tile the publisher does not offer stays nodata.
+also maps 255 to nodata.
 
-The published run is a Batch job in europe-west1. The laptop only submits
-that job.
+Two layouts, chosen by sprout.layout in the recipe:
+
+  clip (version 1): one COG from the South Africa clip, with maximum overviews.
+  per-tile (version 2): one COG per seed tile, full-resolution classes only and
+  no overviews, a VRT over them, and two STAC files. A tile the publisher does
+  not offer is simply not in the VRT and reads as nodata.
+
+The published runs are Batch jobs in europe-west1. The laptop only submits
+them. A per-tile run is one task per tile, resumable, and `collect` writes the
+VRT and STAC once every tile has its record.
 
   python sprout/cropland.py submit
   python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml
+  python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml
+
+A pilot is one task on one tile that times each compression level and writes
+no output, so a full run is costed from a measurement rather than a guess:
+
+  python sprout/cropland.py submit --recipe ... --pilot 30N_080E.tif
 """
 from __future__ import annotations
 
@@ -344,7 +357,12 @@ def write_cog(source: Path, overviews: list[Path], dest: Path, recipe: dict) -> 
     )
 
 
-def check_sprout(source: dict, sprout: dict, recipe: dict) -> list[str]:
+def check_sprout(source: dict, sprout: dict, recipe: dict, overviews: bool = True) -> list[str]:
+    """Compare a written COG with its source.
+
+    overviews=False is a per-tile Sprout. It must carry none, so no resampling
+    choice is baked into a file that Facts and Tiles both read.
+    """
     problems = []
     values = published_values(recipe)
     if sprout["layout"] != "COG":
@@ -378,8 +396,11 @@ def check_sprout(source: dict, sprout: dict, recipe: dict) -> list[str]:
         expected[values["nodata"]] = expected.get(values["nodata"], 0) + gap
     if sprout["counts"] != expected:
         problems.append(f"counts are {sprout['counts']}, expected {expected}")
-    if overview_sizes(source["width"], source["height"]) and sprout["overviews"] < 1:
-        problems.append("COG has no overviews")
+    if overviews:
+        if overview_sizes(source["width"], source["height"]) and sprout["overviews"] < 1:
+            problems.append("COG has no overviews")
+    elif sprout["overviews"] != 0:
+        problems.append(f"COG has {sprout['overviews']} overviews, a per-tile sprout has none")
     return problems
 
 
@@ -552,7 +573,7 @@ def write_mosaic_sprout(
 
 
 def stac_names(recipe: dict) -> tuple[str, str]:
-    stem = Path(recipe["sprout"]["path"]).name.removesuffix(".tif")
+    stem = Path(recipe["sprout"]["path"]).stem
     return "collection.json", f"{stem}.json"
 
 
@@ -721,6 +742,20 @@ def job_shape(recipe: dict) -> dict:
     so the machine has 16 GB of RAM.
     """
     pool = str(dataset_pool_size(len(recipe["seed"].get("tiles") or [])))
+    if is_per_tile(recipe):
+        # One tile per task: 40,000 by 40,000 pixels, a file of 13-68 MB in and
+        # a similar size out. Retries are per tile. Spot preemption, exit code
+        # 50001, is retried too.
+        return {
+            "machine": MACHINE,
+            "cpu_milli": "2000",
+            "memory_mib": "6144",
+            "disk_gb": 30,
+            "max_run_seconds": 7200,
+            "dataset_pool_size": "16",
+            "parallelism": 8,
+            "max_retries": 3,
+        }
     if "clip" in recipe["seed"]:
         return {
             "machine": MACHINE,
@@ -795,6 +830,342 @@ def resolve_tile(recipe: dict, name: str) -> str:
     return gs_join(prefix, tile_object_name(name, url, present))
 
 
+# One Sprout tile. Full-resolution classes only, no overviews. The codec
+# is chosen by sprout/benchmark_compression.py; its numbers are in the README.
+TILE_COG_OPTIONS = [
+    "COMPRESS=DEFLATE",
+    "LEVEL=9",
+    "PREDICTOR=NO",  # on 0/1 classes the predictor made files about 10% larger
+    "BLOCKSIZE=512",
+    "OVERVIEWS=NONE",
+    "BIGTIFF=IF_SAFER",
+    "NUM_THREADS=ALL_CPUS",
+    "STATISTICS=NO",
+]
+VRT_TYPE = "application/xml"
+COG_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
+# Levels the pilot times against one real tile before a full run is approved.
+PILOT_LEVELS = (6, 9)
+
+
+def tile_cog_options(level: int | None = None) -> list[str]:
+    if level is None:
+        return list(TILE_COG_OPTIONS)
+    return [f"LEVEL={level}" if o.startswith("LEVEL=") else o for o in TILE_COG_OPTIONS]
+
+
+def is_per_tile(recipe: dict) -> bool:
+    return recipe["sprout"].get("layout") == "per-tile"
+
+
+def sprout_folder(recipe: dict) -> str:
+    return recipe["sprout"]["path"].rsplit("/", 1)[0] + "/"
+
+
+def tile_output(recipe: dict, name: str) -> str:
+    return gs_join(recipe["sprout"]["tiles_path"], name)
+
+
+def sidecar_name(name: str) -> str:
+    return name.removesuffix(".tif") + ".json"
+
+
+def relative_tile_path(recipe: dict, name: str) -> str:
+    """Where a tile sits from the VRT, so the collection opens from any prefix."""
+    folder = sprout_folder(recipe)
+    tiles = recipe["sprout"]["tiles_path"]
+    if not tiles.endswith("/"):
+        tiles += "/"
+    if not tiles.startswith(folder) or tiles == folder:
+        raise ValueError(f"sprout.tiles_path {tiles} is not inside {folder}")
+    return tiles[len(folder) :] + name
+
+
+def require_per_tile(recipe: dict) -> None:
+    if not is_per_tile(recipe):
+        raise SystemExit("this recipe is not per tile: sprout.layout is not 'per-tile'")
+    if not recipe["sprout"].get("tiles_path"):
+        raise SystemExit("a per-tile recipe needs sprout.tiles_path")
+    if "clip" in recipe["seed"]:
+        raise SystemExit("a per-tile recipe has no seed clip")
+    require_destination(recipe)
+    relative_tile_path(recipe, "x.tif")
+
+
+def build_tile(source: Path, dest: Path, recipe: dict, work: Path, level: int | None = None) -> dict:
+    """One seed tile to one Sprout COG. Returns the record kept beside it.
+
+    The tile is checked and counted before it is written. The COG is counted
+    again and must match, so a wrong remap stops this tile and no other.
+    """
+    started = time.perf_counter()
+    work.mkdir(parents=True, exist_ok=True)
+    facts = raster_facts(source)
+    check_source_tile(facts, recipe, source)
+    vrt = work / f"{dest.stem}.vrt"
+    write_remap_vrt(source, vrt, recipe, facts["projection"])
+    if dest.exists():
+        dest.unlink()
+    gdal.Translate(str(dest), str(vrt), format="COG", creationOptions=tile_cog_options(level))
+    written = raster_facts(dest)
+    problems = check_sprout(facts, written, recipe, overviews=False)
+    if problems:
+        raise ValueError(f"{source.name} failed the recipe check:\n" + "\n".join(problems))
+    return {
+        "tile": source.name,
+        "bytes": dest.stat().st_size,
+        "width": written["width"],
+        "height": written["height"],
+        "transform": list(written["transform"]),
+        "crs": written["crs"],
+        "version": written["version"],
+        "counts": {str(value): count for value, count in written["counts"].items()},
+        "seconds": round(time.perf_counter() - started, 1),
+        "peak_memory_bytes": peak_memory_bytes(),
+    }
+
+
+def vsi_read_text(path: str) -> str | None:
+    stat = gdal.VSIStatL(path)
+    if stat is None:
+        return None
+    handle = gdal.VSIFOpenL(path, "rb")
+    if handle is None:
+        return None
+    try:
+        data = gdal.VSIFReadL(1, max(stat.size, 1), handle)
+    finally:
+        gdal.VSIFCloseL(handle)
+    return data.decode() if data else ""
+
+
+def vsi_write_text(path: str, text: str) -> None:
+    handle = gdal.VSIFOpenL(path, "wb")
+    if handle is None:
+        raise OSError(f"cannot write {path}")
+    try:
+        data = text.encode()
+        if gdal.VSIFWriteL(data, 1, len(data), handle) != len(data):
+            raise OSError(f"short write to {path}")
+    finally:
+        gdal.VSIFCloseL(handle)
+
+
+def tile_is_complete(recipe: dict, name: str) -> bool:
+    """A tile is done when its record exists and the COG has the recorded size.
+
+    The record is written after the COG upload finishes, so a task that was
+    cut off leaves no record and the tile runs again.
+    """
+    text = vsi_read_text(gs_to_vsi(gs_join(recipe["sprout"]["tiles_path"], sidecar_name(name))))
+    if not text:
+        return False
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return False
+    stat = gdal.VSIStatL(gs_to_vsi(tile_output(recipe, name)))
+    return stat is not None and stat.size == record.get("bytes")
+
+
+def command_run_tile(recipe: dict, index: int, work: Path) -> None:
+    if os.environ.get(BATCH_ENV) != "1":
+        raise SystemExit(
+            "A sprout tile runs as a Batch task in europe-west1. "
+            "From this computer, use: python sprout/cropland.py submit"
+        )
+    require_per_tile(recipe)
+    tiles = recipe["seed"]["tiles"]
+    if not 0 <= index < len(tiles):
+        raise SystemExit(f"tile index {index} is outside 0..{len(tiles) - 1}")
+    name = tiles[index]
+    if tile_is_complete(recipe, name):
+        print(f"skip {name}: already written", flush=True)
+        return
+    work.mkdir(parents=True, exist_ok=True)
+    gdal.SetCacheMax(512 * 1024 * 1024)
+    local = work / name
+    out = work / f"sprout-{name}"
+    try:
+        source = resolve_tile(recipe, name)
+        print(f"copy {source}", flush=True)
+        vsi_copy(gs_to_vsi(source), str(local))
+        record = build_tile(local, out, recipe, work)
+        destination = tile_output(recipe, name)
+        vsi_copy(str(out), gs_to_vsi(destination))
+        stored = gdal.VSIStatL(gs_to_vsi(destination))
+        if stored is None or stored.size != record["bytes"]:
+            raise OSError(f"{destination} is not {record['bytes']} bytes after upload")
+        vsi_write_text(
+            gs_to_vsi(gs_join(recipe["sprout"]["tiles_path"], sidecar_name(name))),
+            json.dumps(record, indent=2) + "\n",
+        )
+        print(f"wrote {destination} {record['bytes']} bytes in {record['seconds']} s", flush=True)
+    finally:
+        for path in (local, out, work / f"{out.stem}.vrt"):
+            if path.exists():
+                path.unlink()
+
+
+def command_pilot(recipe: dict, name: str, work: Path, scratch: str) -> None:
+    """Time one real tile at each compression level. Writes nothing to the sprout path.
+
+    This measures what the estimate in sprout/README.md guesses: the copy, the
+    two counting passes, the compression and the upload, on the machine a full
+    run would use. Outputs go to the scratch prefix and are deleted after they
+    are timed, so a later run still sees the tile as missing.
+    """
+    if os.environ.get(BATCH_ENV) != "1":
+        raise SystemExit(
+            "A pilot runs as a Batch task in europe-west1. From this computer, use: "
+            "python sprout/cropland.py submit --pilot <tile>"
+        )
+    require_per_tile(recipe)
+    if name not in recipe["seed"]["tiles"]:
+        raise SystemExit(f"{name} is not a seed tile in this recipe")
+    work.mkdir(parents=True, exist_ok=True)
+    gdal.SetCacheMax(512 * 1024 * 1024)
+    local = work / name
+    source = resolve_tile(recipe, name)
+    print(f"copy {source}", flush=True)
+    started = time.perf_counter()
+    vsi_copy(gs_to_vsi(source), str(local))
+    print(f"copy_seconds {time.perf_counter() - started:.1f}", flush=True)
+    print(f"seed_bytes {local.stat().st_size}", flush=True)
+    for level in PILOT_LEVELS:
+        out = work / f"pilot-{level}-{name}"
+        record = build_tile(local, out, recipe, work, level=level)
+        destination = gs_join(scratch, out.name)
+        started = time.perf_counter()
+        vsi_copy(str(out), gs_to_vsi(destination))
+        upload = time.perf_counter() - started
+        gdal.Unlink(gs_to_vsi(destination))
+        print(
+            f"level {level} bytes {record['bytes']} build_seconds {record['seconds']} "
+            f"upload_seconds {upload:.1f} counts {record['counts']}",
+            flush=True,
+        )
+        for path in (out, work / f"{out.stem}.vrt"):
+            if path.exists():
+                path.unlink()
+    local.unlink()
+
+
+def srs_wkt(crs: str) -> str:
+    srs = osr.SpatialReference()
+    srs.SetFromUserInput(crs)
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    return srs.ExportToWkt()
+
+
+def write_collection_vrt(canvas: dict, dest: Path, recipe: dict) -> None:
+    nodata = published_values(recipe)["nodata"]
+    geo = ", ".join(f"{value:.12g}" for value in canvas["transform"])
+    sources = []
+    for (xoff, yoff, width, height), frame in canvas["placed"]:
+        sources.append(
+            f"""    <SimpleSource>
+      <SourceFilename relativeToVRT="1">{xml_escape(frame["path"])}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="{width}" ySize="{height}"/>
+      <DstRect xOff="{xoff}" yOff="{yoff}" xSize="{width}" ySize="{height}"/>
+    </SimpleSource>"""
+        )
+    body = "\n".join(sources)
+    dest.write_text(
+        f"""<VRTDataset rasterXSize="{canvas["width"]}" rasterYSize="{canvas["height"]}">
+  <SRS dataAxisToSRSAxisMapping="2,1">{xml_escape(canvas["projection"])}</SRS>
+  <GeoTransform>{geo}</GeoTransform>
+  <Metadata>
+    <MDI key="version">{xml_escape(version_of(recipe))}</MDI>
+    <MDI key="class_values">{xml_escape(class_values_text(recipe))}</MDI>
+  </Metadata>
+  <VRTRasterBand dataType="Byte" band="1">
+    <NoDataValue>{nodata}</NoDataValue>
+{body}
+  </VRTRasterBand>
+</VRTDataset>
+"""
+    )
+
+
+def write_collection(recipe: dict, records: dict[str, dict], directory: Path) -> list[Path]:
+    """The VRT and the two STAC files, from the per-tile records.
+
+    Every tile in the recipe must have a record. A listed tile with none stops
+    here, so a partial run cannot publish a collection with a hole in it.
+    """
+    require_per_tile(recipe)
+    names = recipe["seed"]["tiles"]
+    missing = [name for name in names if name not in records]
+    if missing:
+        raise ValueError(f"{len(missing)} tiles have no record, for example {missing[0]}")
+    pixel = float(recipe["grid"]["pixel_size_deg"])
+    frames = []
+    for name in names:
+        record = records[name]
+        if record["crs"] != recipe["grid"]["crs"]:
+            raise ValueError(f"{name} CRS is {record['crs']}")
+        frames.append(
+            {
+                "width": record["width"],
+                "height": record["height"],
+                "transform": tuple(record["transform"]),
+                "path": relative_tile_path(recipe, name),
+                "projection": srs_wkt(record["crs"]),
+            }
+        )
+    canvas = mosaic_canvas(frames, pixel)
+    directory.mkdir(parents=True, exist_ok=True)
+    vrt = directory / Path(recipe["sprout"]["path"]).name
+    write_collection_vrt(canvas, vrt, recipe)
+    grid = {"width": canvas["width"], "height": canvas["height"], "transform": canvas["transform"]}
+    collection, item = stac_documents(recipe, grid)
+    item["assets"]["data"]["type"] = VRT_TYPE
+    for name in names:
+        item["assets"][f"tile-{name.removesuffix('.tif')}"] = {
+            "href": tile_output(recipe, name),
+            "type": COG_TYPE,
+            "roles": ["data"],
+            "title": f"{recipe['title']} {name}",
+        }
+    collection_name, item_name = stac_names(recipe)
+    paths = [vrt]
+    for name, document in ((collection_name, collection), (item_name, item)):
+        path = directory / name
+        path.write_text(json.dumps(document, indent=2) + "\n")
+        paths.append(path)
+    return paths
+
+
+def command_collect(recipe: dict, work: Path) -> None:
+    """Gather the per-tile records, write the VRT and STAC files, upload them.
+
+    Light work: 223 small JSON files in, three small files out. It stops if any
+    tile has no record. Run it after the Batch tasks have all finished.
+    """
+    require_per_tile(recipe)
+    records_dir = work / "records"
+    records_dir.mkdir(parents=True, exist_ok=True)
+    pattern = gs_join(recipe["sprout"]["tiles_path"], "*.json")
+    gcloud(["storage", "cp", pattern, str(records_dir)])
+    records = {}
+    for path in sorted(records_dir.glob("*.json")):
+        record = json.loads(path.read_text())
+        records[record["tile"]] = record
+    paths = write_collection(recipe, records, work / "collection")
+    folder = sprout_folder(recipe)
+    for path in paths:
+        upload_with_gcloud(path, gs_join(folder, path.name))
+    stored = sum(record["bytes"] for record in records.values())
+    seconds = sum(record["seconds"] for record in records.values())
+    print(f"tiles {len(records)}", flush=True)
+    print(f"cog_bytes_total {stored}", flush=True)
+    print(f"task_seconds_total {seconds:.0f}", flush=True)
+    print(f"peak_memory_bytes_max {max(r['peak_memory_bytes'] for r in records.values())}", flush=True)
+    print(f"collection {recipe['sprout']['path']}", flush=True)
+
+
 def materialize_clip(recipe: dict, work: Path) -> Path:
     name = recipe["seed"]["clip"]["file"]
     dest = work / name
@@ -807,13 +1178,27 @@ def materialize_clip(recipe: dict, work: Path) -> Path:
     return dest
 
 
-def batch_job(script_prefix: str, shape: dict | None = None) -> dict:
+RUN_COMMAND = (
+    "python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json "
+    "--work /tmp/work --upload --scratch {scratch}"
+)
+TILE_COMMAND = (
+    "python3 /tmp/in/cropland.py run-tile --recipe /tmp/in/recipe.json --work /tmp/work"
+)
+PILOT_COMMAND = (
+    "python3 /tmp/in/cropland.py pilot --recipe /tmp/in/recipe.json --work /tmp/work "
+    "--tile {tile} --scratch {scratch}"
+)
+
+
+def batch_job(script_prefix: str, shape: dict | None = None, command: str | None = None) -> dict:
     """One spot VM in europe-west1. Batch deletes it when the task ends.
 
     The script and recipe are copied to the scratch prefix before submit.
     The container downloads them. A Cloud Storage mount is not used: the
     Batch host's root is read-only, so creating a mount directory fails.
     """
+    command = (command or RUN_COMMAND).format(scratch=script_prefix)
     if shape is None:
         shape = job_shape({"id": "cropland-2024", "seed": {"clip": {}}, "sprout": {"path": ""}})
     prefix = script_prefix.removeprefix("gs://").rstrip("/")
@@ -837,7 +1222,7 @@ folder.mkdir(exist_ok=True)
 download("cropland.py", folder / "cropland.py")
 download("recipe.json", folder / "recipe.json")
 PY
-python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json --work /tmp/work --upload --scratch {script_prefix}
+{command}
 """
     return {
         "taskGroups": [
@@ -913,6 +1298,8 @@ def command_run(recipe: dict, work: Path, upload: bool, scratch: str | None) -> 
             "The sprout run is the Batch job in europe-west1. "
             "From this computer, use: python sprout/cropland.py submit"
         )
+    if is_per_tile(recipe):
+        raise SystemExit("this recipe is per tile. A task runs: python sprout/cropland.py run-tile")
     require_destination(recipe)
     work.mkdir(parents=True, exist_ok=True)
     cog = work / Path(recipe["sprout"]["path"]).name
@@ -932,27 +1319,58 @@ def command_run(recipe: dict, work: Path, upload: bool, scratch: str | None) -> 
         delete_scratch(scratch)
 
 
-def command_submit(recipe_path: Path) -> None:
+def tile_batch_job(recipe: dict, script_prefix: str, shape: dict) -> dict:
+    """One Batch task per seed tile. A failed or preempted task reruns alone.
+
+    A task whose tile is already written skips it, so submitting the same job
+    again after a failure only does the missing tiles.
+    """
+    job = batch_job(script_prefix, shape, command=TILE_COMMAND)
+    group = job["taskGroups"][0]
+    group["taskCount"] = str(len(recipe["seed"]["tiles"]))
+    group["parallelism"] = str(shape["parallelism"])
+    spec = group["taskSpec"]
+    spec["maxRetryCount"] = shape["max_retries"]
+    spec["lifecyclePolicies"] = [
+        {"action": "RETRY_TASK", "actionCondition": {"exitCodes": [50001]}}
+    ]
+    return job
+
+
+def command_submit(recipe_path: Path, pilot: str | None = None) -> None:
     recipe = load_recipe(recipe_path)
-    require_destination(recipe)
-    job_id = recipe["sprout"]["id"]
+    per_tile = is_per_tile(recipe)
+    if pilot and not per_tile:
+        raise SystemExit("--pilot needs a per-tile recipe")
+    if per_tile:
+        require_per_tile(recipe)
+        job_id = f"sprout-{recipe['id']}-pilot" if pilot else f"sprout-{recipe['id']}"
+    else:
+        require_destination(recipe)
+        job_id = recipe["sprout"]["id"]
     shape = job_shape(recipe)
     prefix = scratch_prefix(recipe)
     gcloud(["services", "enable", "batch.googleapis.com"])
-    existing = subprocess.run(
-        ["gcloud", "storage", "ls", recipe["sprout"]["path"], f"--project={PROJECT}"],
-        text=True,
-        capture_output=True,
-    )
-    if existing.returncode == 0 and recipe["sprout"]["path"] in existing.stdout:
-        raise SystemExit(f"{recipe['sprout']['path']} already exists")
+    if not per_tile:
+        existing = subprocess.run(
+            ["gcloud", "storage", "ls", recipe["sprout"]["path"], f"--project={PROJECT}"],
+            text=True,
+            capture_output=True,
+        )
+        if existing.returncode == 0 and recipe["sprout"]["path"] in existing.stdout:
+            raise SystemExit(f"{recipe['sprout']['path']} already exists")
     work = ROOT / "data" / "sprout" / recipe["id"]
     work.mkdir(parents=True, exist_ok=True)
     recipe_json = work / "recipe.json"
     recipe_json.write_text(json.dumps(recipe) + "\n")
     upload_with_gcloud(Path(__file__).resolve(), gs_join(prefix, "cropland.py"))
     upload_with_gcloud(recipe_json, gs_join(prefix, "recipe.json"))
-    config = batch_job(prefix, shape)
+    if pilot:
+        config = batch_job(prefix, shape, command=PILOT_COMMAND.replace("{tile}", pilot))
+    elif per_tile:
+        config = tile_batch_job(recipe, prefix, shape)
+    else:
+        config = batch_job(prefix, shape)
     config_path = work / "batch_job.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     print(config_path.read_text(), flush=True)
@@ -963,8 +1381,20 @@ def command_submit(recipe_path: Path) -> None:
     )
     gcloud(["batch", "jobs", "submit", job_id, f"--location={REGION}", f"--config={config_path}"])
     print(f"submitted {job_id} in {REGION}", flush=True)
-    print(f"output {recipe['sprout']['path']}", flush=True)
+    if pilot:
+        print(f"output none: the pilot times {pilot} and writes nothing", flush=True)
+    else:
+        print(
+            f"output {recipe['sprout']['tiles_path'] if per_tile else recipe['sprout']['path']}",
+            flush=True,
+        )
     print_job_followup(job_id)
+    if per_tile and not pilot:
+        print(
+            "when every task has finished: "
+            f"python sprout/cropland.py collect --recipe {recipe_path}",
+            flush=True,
+        )
 
 
 def peak_memory_bytes() -> int:
@@ -976,15 +1406,42 @@ def peak_memory_bytes() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("run", "submit"))
+    parser.add_argument("command", choices=("run", "submit", "run-tile", "collect", "pilot"))
     parser.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
     parser.add_argument("--work", type=Path, default=ROOT / "data" / "sprout" / "cropland-2024")
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--scratch", default=None)
+    parser.add_argument(
+        "--index",
+        type=int,
+        default=None,
+        help="seed tile to build; a Batch task reads BATCH_TASK_INDEX when this is not set",
+    )
+    parser.add_argument(
+        "--tile",
+        default=None,
+        help="seed tile the pilot times, for example 30N_080E.tif",
+    )
+    parser.add_argument(
+        "--pilot",
+        default=None,
+        help="submit a one-task job that times this tile at each level and writes no output",
+    )
     args = parser.parse_args()
     started = time.perf_counter()
     if args.command == "submit":
-        command_submit(args.recipe)
+        command_submit(args.recipe, args.pilot)
+    elif args.command == "pilot":
+        if not args.tile:
+            raise SystemExit("pilot needs --tile")
+        command_pilot(load_recipe(args.recipe), args.tile, args.work, args.scratch or "")
+    elif args.command == "run-tile":
+        index = args.index if args.index is not None else int(os.environ.get("BATCH_TASK_INDEX", "-1"))
+        command_run_tile(load_recipe(args.recipe), index, args.work)
+    elif args.command == "collect":
+        recipe = load_recipe(args.recipe)
+        work = args.work if args.work != parser.get_default("work") else ROOT / "data" / "sprout" / recipe["id"]
+        command_collect(recipe, work)
     else:
         command_run(load_recipe(args.recipe), args.work, args.upload, args.scratch)
     elapsed = time.perf_counter() - started

@@ -50,7 +50,13 @@ Two earlier submits failed in a few seconds while the container was being mounte
 
 The first submit, uid `cropland-2024-v2-f7c0999b-b228-424f-80`, was queued at `2026-10-30T13:05:15Z` and failed at `2026-10-30T13:29:10Z`. It had read all 223 tiles. GDAL then stopped because the dataset pool was 2, which is below the worker thread count. No COG was written, and the virtual machine was removed.
 
-Submitted again at `2026-10-30T15:06:21Z` as the same job name, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`. The dataset pool is 239, one handle per tile plus the worker threads. Decoded pixels stay in the 512 MB cache. Bytes stored, wall time, and peak memory wait until it finishes.
+Submitted again at `2026-10-30T15:06:21Z` as the same job name, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`. The dataset pool was 239, one handle per tile plus the worker threads. Decoded pixels stay in the 512 MB cache.
+
+That attempt did not finish inside the 12 hour limit. The checks, the mosaic (about 80 minutes), and all 12 maximum overviews took until `2026-10-30T21:10Z`. The COG write started at `21:46Z` and was at 75% at `03:02Z` on 31 October. Batch stopped the task at `03:07:26Z` with exit code 50005, which it reports as a timeout. It was not a spot interruption. Batch retried the task from the start on the same machine, and nothing from the first attempt was kept, because nothing is uploaded until the end.
+
+The retry was at overview 1, 55%, at `06:34Z`. At the same pace its COG write would again have had about 5 hours before the limit at `15:08Z`, so it would have timed out at about the same point with no retries left. The job was cancelled on 31 October with `gcloud batch jobs delete`. No COG and no STAC file were written, no virtual machine was left running, and the sprout prefix is empty. The two runs used about 15.5 hours of compute and disk, about $1.45 at list prices.
+
+What the run showed for a single global file: the whole task needs about 14 hours, the COG write alone about 7. A restart loses all of it. The next sprout run is per tile, as described under "Direction for later years".
 
 `submit --recipe cookbook/recipes/cropland-2024-v2.yaml` reads `cookbook/recipes/cropland-2024-v2.yaml` and mosaics the 223 checked tiles under `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. A tile on the Storage Transfer host path is used when both copies exist. The flat file name is the 2024 copy. There is no country clip. A 10° tile the publisher does not offer stays nodata. `0` becomes `0` and `100` becomes `1`. Any other value stops the run before the COG is written. `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` is not a destination.
 
@@ -75,7 +81,7 @@ gcloud batch jobs delete cropland-2024-v2 --location=europe-west1 --project=natu
 
 ## Expected cost
 
-Approved on 30 October 2026. The first run failed before upload. The replacement job is `cropland-2024-v2`, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`.
+Approved on 30 October 2026 for one run of a few hours. Both global runs failed, so this estimate did not hold. See the record above for the real timing.
 
 The version 1 disk was 30 GB for a 39 MB COG. This job is sized from the global seed instead.
 
@@ -83,4 +89,89 @@ The seed is 5,289,882,209 bytes for 356,800,000,000 source pixels, about 15 byte
 
 One tile is 1.6 GB uncompressed. The process keeps two sources open and a 512 MB cache, on a machine with 16 GB of RAM. The request is 12 GB for the task.
 
-Spot `e2-standard-4` is about $0.08 an hour. A 100 GB balanced disk is about $0.10 per GB-month, so a few hours of disk is a few cents. A run of a few hours, including one spot retry, stays under $1. Reading the seed in the same EU bucket has no egress. Keeping a 12 GB COG is about $0.02 per GB-month, under $0.30 a month.
+Spot `e2-standard-4` is about $0.08 an hour. A 100 GB balanced disk is about $0.10 per GB-month, so a few hours of disk is a few cents. Reading the seed in the same EU bucket has no egress. Keeping a 12 GB COG is about $0.02 per GB-month, under $0.30 a month.
+
+This estimate was too low on time. The run is expected to take 8–9 hours, not a few. One clean run is about $0.85. A spot interruption restarts the task from the tiles, because nothing is uploaded or saved before the end, so a retry would roughly double that to about $1.70.
+
+## Direction for later years
+
+Decided on 30 October 2026, while job `cropland-2024-v2` was running. This is not built. The version 2 global COG is written the way this page describes, because the job was already running and is past the steps that failed. The next sprout run changes as follows.
+
+1. **One Sprout COG per geographic tile, not one global mosaic.** Each of the 223 seed tiles becomes its own COG at a path named from the recipe. The tiles already sit on whole-pixel offsets, which `mosaic_canvas` checks today.
+2. **Sprout keeps the full-resolution classification only.** It remaps `0` and `100` to `0` and `1` and keeps nodata `255`. It does not decide how a map should be drawn, so it carries no maximum or `q3` overviews. By default a Sprout tile has no overviews. A different overview method needs its own decision.
+3. **Resampling moves to the Tiles pipeline.** Tiles builds its own pyramid from the full-resolution pixels with the method chosen in task 04, `max` or `q3`. The recipe's `tiles.resampling` field is the only place that choice lives. Overviews written by a Sprout run must not set it by accident. A Warp that reads a Sprout overview takes a quartile of values that were already maximums.
+4. **Facts and Tiles read a collection of Sprout COGs**, through a VRT or an explicit list. Facts only opens the tiles a place touches. Still to check: whether a VRT over `/vsigs/` paths in a private bucket works for both readers, and how STAC lists 223 assets.
+5. **Resumable per tile.** One Batch task per tile, with capped parallelism. A task skips a tile whose output exists and is complete. Each tile writes to a final object name only when it is finished, since a GCS object is not visible until the upload completes. A manifest records bytes and a checksum per tile, so a rerun redoes only the missing or failed ones. The cost of a spot interruption becomes one tile, not the whole run.
+6. **Benchmark compression before choosing it.** Compare DEFLATE with `PREDICTOR=2` and level 9, ZSTD, and LZW on a few representative tiles: one dense cropland tile, one mostly ocean tile, and one mixed. Record bytes stored, write time, and the time to read a place-sized window. The version 2 global run used DEFLATE at level 9 and is the reference. A format a reader cannot open, for example ZSTD in an older reader, counts against it.
+
+The finest zoom is not the source pixel. At zoom 12 one 256-pixel tile pixel is about 38 m at the equator, and GLAD is 0.00025°, about 28 m. Keeping original pixels at the finest zoom needs a higher `max_zoom` in the recipe, such as 13. That is about four times the tiles, so it is an open decision for task 04.
+
+Consequences for the version 2 tasks. Task 04's `max` against `q3` sample must be built from full-resolution pixels, not from the global COG's maximum overviews, or both samples will start from maximums. Facts is not affected, because it counts full-resolution pixels. Task 06 can read the global COG this year.
+
+## Per-tile run (version 2, next run)
+
+Replaces the global mosaic. Built on branch `sprout/cropland-2024-v2-per-tile`. Not yet run.
+
+Layout, from `cookbook/recipes/cropland-2024-v2.yaml`:
+
+- `tiles/<seed tile name>.tif`: one COG per seed tile, full resolution, no overviews, DEFLATE level 9, no predictor, 512 blocks.
+- `tiles/<seed tile name>.json`: a record of bytes, size, transform, counts, seconds and peak memory. It is written last, so a tile without a record is not finished.
+- `cropland-2024.vrt`, `collection.json`, `cropland-2024.json`: the collection VRT and two static STAC files. They are written by `collect` once every tile has a record.
+
+```bash
+python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml   # one Batch task per tile
+python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml --work data/sprout/collect
+```
+
+Resume. A task skips a tile whose record exists and whose COG size matches the record. A retry or a rerun redoes only the missing or failed tiles. Batch retries a task up to 3 times, and retries a spot preemption (exit 50001) separately. A failure costs one tile, not the run. Cancel and status commands are printed by `submit`.
+
+### Compression benchmark
+
+`sprout/benchmark_compression.py`, run on 31 October 2026 with GDAL 3.11.4 and 2 threads. It cuts a 5,000 × 5,000 window from the middle of three seed tiles and extrapolates to a whole tile (×64). The extrapolation is rough. For the dense tile it gives 70–80 MB where the seed tile is 68 MB.
+
+| Codec | Dense `30N_080E` MB | Mixed `20S_020E` MB | Empty `00N_160E` MB | Dense write min |
+| --- | --- | --- | --- | --- |
+| deflate-9, no predictor | 69.7 | 22.8 | 1.9 | 3.4 |
+| deflate-9 + predictor (global run) | 79.6 | 25.3 | 1.9 | 2.5 |
+| deflate-6, no predictor | 80.9 | 25.8 | 1.9 | 0.4 |
+| lzw, no predictor | 70.2 | 26.7 | 5.8 | 0.3 |
+| zstd-15, no predictor | 76.5 | 23.3 | 0.3 | 0.8 |
+| zstd-9, no predictor | 79.6 | 24.4 | 0.3 | 0.3 |
+| deflate-6 + predictor | 91.4 | 28.6 | 1.9 | 0.4 |
+
+Findings:
+
+- The predictor makes these 0/1 tiles about 10% larger. The global run used it.
+- Window reads took 10–20 ms for every codec, so read speed does not separate them.
+- ZSTD is smaller on empty tiles and close to DEFLATE elsewhere, but an older reader may not open it. A GDAL reader is fine. Not chosen.
+- Chosen: DEFLATE level 9, no predictor. It is the smallest widely readable option. It is the slowest, about 3.4 minutes for a dense tile, which a task of 223 spreads over parallel machines. Level 6 is the fallback if a task runs long, at about 12% more storage.
+
+### Pilot
+
+A pilot is one Batch task on one seed tile. It times the copy, both counting passes, the compression at each level in `PILOT_LEVELS`, and the upload, on the machine a full run would use. It writes nothing to `tiles_path` and deletes what it uploads, so a later run still sees the tile as missing.
+
+```bash
+python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml --pilot 30N_080E.tif
+```
+
+Run on 31 October 2026, on the densest seed tile, to replace the guess below with a measurement.
+
+- job `sprout-cropland-2024-v2-pilot` in `europe-west1`, one spot `e2-standard-2` task, 30 GB disk, submitted 07:24 UTC
+- output: none
+- status: `gcloud batch jobs describe sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
+- result: pending
+
+### Expected cost (not measured)
+
+Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. A guess of 2–5 minutes a tile on 2 vCPU gives about 8–19 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $1. With 8 tasks in parallel the wall time is about 1–2.5 hours. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
+
+A first run of one dense tile is the cheap way to replace the guess with a measurement. Nothing is submitted until the cost is approved.
+
+### Downstream changes still needed
+
+- Facts, `facts/cropland.py`: `require_sprout` expects one COG's layout metadata, and `window_limits` opens one raster. It must open the VRT, or only the tiles a place touches.
+- Tiles, `tiles/cropland.py`: `materialize_sprout` copies one file. It must read the collection and build its own pyramid with the recipe's `tiles.resampling`.
+- Tasks 04 to 06 in `docs/tasks/` and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
+- The global mosaic code in `sprout/cropland.py` (`mosaic_canvas`, `write_mosaic_sprout`) is superseded and left in place. Remove it once the per-tile run is accepted.
+- Still to check: a VRT over private `/vsigs/` paths in both readers.

@@ -121,8 +121,12 @@ def test_the_global_recipe_names_version_2_and_every_source_tile():
         assert lat_s[2] in "NS" and lon_s[3] in "EW"
         assert len(lat_s) == 3 and len(lon_s) == 4
     assert recipe["sprout"]["id"] == "cropland-2024-v2"
+    assert recipe["sprout"]["layout"] == "per-tile"
     assert recipe["sprout"]["path"] == (
-        "gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif"
+        "gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt"
+    )
+    assert recipe["sprout"]["tiles_path"] == (
+        "gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/"
     )
     assert "/published/" not in recipe["sprout"]["path"]
     assert recipe["sprout"]["values"] == {"cropland": 1, "not_cropland": 0, "nodata": 255}
