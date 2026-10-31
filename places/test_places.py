@@ -3,12 +3,14 @@
 Run: python -m pytest places
 """
 import http.client
+import shutil
 import json
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
+import pytest
 import yaml
 
 import importlib.util
@@ -120,61 +122,146 @@ def test_the_query_reads_places_geom_and_the_stored_cropland_fact():
     assert "anon" not in places.PLACES_SQL
     assert "facts.percent" in places.PLACES_SQL
     assert "sprout_id" in places.PLACES_SQL
-    assert "ST_MakeValid" in places.PLACES_SQL
     assert "ST_AsBinary" in places.PLACES_SQL
     assert "ST_AsEWKB" not in places.PLACES_SQL
+    # The app database does not validate rows. OGR does that on the build machine.
+    assert "ST_MakeValid(places.geom" not in places.PLACES_SQL
+    assert "ST_CollectionExtract" not in places.PLACES_SQL
+    assert "order by" not in places.PLACES_SQL
 
 
+def test_places_are_read_with_a_server_side_cursor():
+    source = Path(places.__file__).read_text()
+    assert "fetchall" not in source
+    assert "conn.cursor(name=" in source
+
+
+def test_each_feature_line_carries_its_own_minzoom(tmp_path):
+    rows = {row["id"]: row for row in sample_places()}
+    source = tmp_path / "places.geojson"
+    write_geojson(source, sample_places())
+    lines = {}
+    for place in places.places_from_file(source):
+        line = json.loads(places.feature_line(place, RECIPE))
+        lines[place.id] = line
+    large, medium, small = rows
+    assert lines[large]["tippecanoe"] == {"minzoom": 0}
+    assert lines[medium]["tippecanoe"] == {"minzoom": 3}
+    assert lines[small]["tippecanoe"] == {"minzoom": 6}
+    assert lines[small]["properties"] == {"id": small, "area_km2": 12}
+    assert lines[large]["properties"]["cropland_percent"] == 0.06
+
+
+def test_tippecanoe_keeps_every_feature():
+    command = places.tippecanoe_command(Path("in.ndjson"), Path("out.pmtiles"), RECIPE)
+    for flag in ("--no-feature-limit", "--no-tile-size-limit", "--no-tiny-polygon-reduction"):
+        assert flag in command
+    assert "--drop-densest-as-needed" not in command
+    assert "--coalesce-smallest-as-needed" not in command
+    assert command[command.index("-z") + 1] == "12"
+    assert command[command.index("-l") + 1] == "places"
+
+
+@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="needs felt/tippecanoe")
 def test_large_places_appear_before_small_ones(tmp_path):
+    source = tmp_path / "places.geojson"
+    dest = tmp_path / "out" / "places.pmtiles"
+    write_geojson(source, sample_places())
+    recipe = low_zoom_recipe()
+    stats = places.build_and_prove(places.places_from_file(source), dest, recipe)
+    assert stats["places"] == 3
+    assert stats["with_cropland"] == 2
+    assert dest.stat().st_size == stats["bytes"]
+    assert set(stats["largest_tile_bytes_by_zoom"]) == set(range(0, 9))
+    large, medium, small = (row["id"] for row in sample_places())
+    assert places.unique_ids_at_zoom(dest, 0) == {large}
+    assert medium not in places.unique_ids_at_zoom(dest, 2)
+    assert small not in places.unique_ids_at_zoom(dest, 5)
+    assert {large, medium, small} <= places.unique_ids_at_zoom(dest, 6)
+    copied = places.properties_at_zoom(dest, 8)
+    assert copied[large]["cropland_percent"] == 0.06
+    assert copied[small]["cropland_percent"] is None
+
+
+@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="needs felt/tippecanoe")
+def test_the_proof_fails_when_a_place_appears_too_early(tmp_path):
     source = tmp_path / "places.geojson"
     dest = tmp_path / "places.pmtiles"
     write_geojson(source, sample_places())
     recipe = low_zoom_recipe()
-    loaded = places.load_geojson(source)
-    stats = places.write_archive(loaded, dest, recipe)
-    assert stats["places"] == 3
-    assert stats["with_cropland"] == 2
-    assert dest.stat().st_size == stats["bytes"]
-    large, medium, small = (row["id"] for row in sample_places())
-    at0 = places.unique_ids_at_zoom(dest, 0)
-    at2 = places.unique_ids_at_zoom(dest, 2)
-    at3 = places.unique_ids_at_zoom(dest, 3)
-    at4 = places.unique_ids_at_zoom(dest, 4)
-    at6 = places.unique_ids_at_zoom(dest, 6)
-    at8 = places.unique_ids_at_zoom(dest, 8)
-    assert at0 == {large}
-    assert medium not in at0
-    assert medium not in at2
-    assert small not in at0
-    assert medium in at3
-    assert small not in at3
-    assert small not in at4
-    assert small in at6
-    assert {large, medium, small} <= at8
-    copied = places.properties_at_zoom(dest, 8)
-    assert copied[large]["area_km2"] == 19000
-    assert copied[large]["cropland_percent"] == 0.06
-    assert copied[small]["cropland_percent"] is None
-    places.prove_archive(loaded, dest, recipe)
+    places.build_and_prove(places.places_from_file(source), dest, recipe)
+    wrong = {
+        row["id"]: {"minzoom": 8, "area_km2": row["area_km2"], "cropland_percent": row.get("cropland_percent")}
+        for row in sample_places()
+    }
+    with pytest.raises(SystemExit, match="before their minzoom"):
+        places.prove_archive(wrong, dest, recipe)
 
 
 def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
     job = places.batch_job(places.SCRATCH)
     policy = job["allocationPolicy"]["instances"][0]["policy"]
-    assert policy["machineType"] == "e2-standard-2"
     assert policy["provisioningModel"] == "SPOT"
     assert job["allocationPolicy"]["location"]["allowedLocations"] == ["regions/europe-west1"]
     spec = job["taskGroups"][0]["taskSpec"]
     assert spec["environment"]["variables"][places.BATCH_ENV] == "1"
     assert "DATABASE_URL" not in spec["environment"]["variables"]
-    script = spec["runnables"][0]["container"]["commands"][1]
+    container = spec["runnables"][0]["container"]
+    assert places.TIPPECANOE_VERSION in container["imageUri"]
+    script = container["commands"][1]
     assert "nature-watch-bucket/scratch/places/protected-areas/" in script
     assert 'download("protected_areas.py"' in script
+    assert "--replace" not in script
     assert "postgresql://" not in script
     assert places.SECRET not in script
     dumped = str(job)
     assert "postgresql://" not in dumped
     assert "DATABASE_URL" not in dumped
+
+
+def test_replace_is_passed_to_the_batch_job_only_when_asked():
+    job = places.batch_job(places.SCRATCH, replace=True)
+    script = job["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]["commands"][1]
+    assert "--upload --replace" in script
+
+
+def test_an_existing_object_is_refused_without_replace(monkeypatch):
+    monkeypatch.setenv(places.BATCH_ENV, "1")
+    monkeypatch.setattr(places, "object_exists", lambda path: True)
+    with pytest.raises(SystemExit, match="--replace"):
+        places.command_run(RECIPE, Path("x.pmtiles"), True, None, False, True)
+    with pytest.raises(SystemExit, match="--replace"):
+        places.command_submit(RECIPE_PATH, False, True)
+
+
+def test_replace_copies_the_old_object_first_and_sets_no_cache(monkeypatch, tmp_path):
+    calls = []
+    existing = {"gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles"}
+    monkeypatch.setattr(places, "object_exists", lambda path: path in existing)
+    monkeypatch.setattr(places, "gcloud", lambda args: calls.append(("gcloud", args)))
+    monkeypatch.setattr(
+        places, "upload_with_gcloud", lambda local, dest, cache_control=None: calls.append(("upload", dest, cache_control))
+    )
+    monkeypatch.setattr(places, "check_range", lambda url: 206)
+    published = "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles"
+    places.replace_published(tmp_path / "x.pmtiles", published)
+    assert calls[0][1][:2] == ["storage", "cp"]
+    assert calls[0][1][3].endswith("/v1/places.previous.pmtiles")
+    assert calls[1] == ("upload", published, "no-cache")
+
+
+def test_the_rollback_copy_is_never_overwritten(monkeypatch, tmp_path):
+    monkeypatch.setattr(places, "object_exists", lambda path: True)
+    with pytest.raises(SystemExit, match="rollback copy"):
+        places.replace_published(tmp_path / "x.pmtiles", "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles")
+
+
+def test_a_range_that_is_not_206_stops_the_run(monkeypatch, tmp_path):
+    monkeypatch.setattr(places, "object_exists", lambda path: False)
+    monkeypatch.setattr(places, "upload_with_gcloud", lambda *a, **k: None)
+    monkeypatch.setattr(places, "check_range", lambda url: 200)
+    with pytest.raises(SystemExit, match="expected 206"):
+        places.replace_published(tmp_path / "x.pmtiles", "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles")
 
 
 def test_the_preview_loads_the_archive_from_memory():
