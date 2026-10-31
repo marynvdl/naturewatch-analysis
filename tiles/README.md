@@ -155,7 +155,7 @@ Every sample was judged against the same truth, the cropland share from the sour
 | `fraction` > 0.5 | 98,513 | 1.00 / 98% / 98% | 1.04 / 90% / 86% | 1.04 / 82% / 79% | 0.96 / 71% / 73% |
 
 Reading it.
-- At every threshold `fraction` is at least as good as `nearest` on both recall and precision at zooms 8, 6 and 4. `nearest` at zoom 6 draws 1.08 of the true area, but only 72% of the true cropland is under a drawn cell and 67% of what is drawn is cropland.
+- From a threshold of 0.25 up, `fraction` is at least as good as `nearest` on both recall and precision at zooms 8, 6 and 4. At 0.1 its precision is lower (73% against 79% at zoom 8). `nearest` at zoom 6 draws 1.08 of the true area, but only 72% of the true cropland is under a drawn cell and 67% of what is drawn is cropland.
 - `fraction` > 0.5 is the closest to the true area: 1.00 at zoom 12, 1.04 at zooms 8 and 6, 0.96 at zoom 4. It gives up recall to get it: 90%, 82%, 71%.
 - `fraction` > 0.35 is the middle choice: 1.16 / 1.28 / 1.39 of the true area at zooms 8 / 6 / 4, recall 95% / 92% / 89%, precision 82% / 72% / 64%.
 - `q3` keeps 97% recall at every zoom but its precision falls to 54% at zoom 4, so about half of what it draws is not cropland. `fraction` > 0.1 behaves like it.
