@@ -194,4 +194,12 @@ Second submit, about 08:12 UTC: DEFLATE level 6, 20 tasks in parallel, up to 3 r
 - status: `gcloud batch jobs describe sprout-cropland-2024-v2 --location=europe-west1 --project=nature-watch-387210 --format="yaml(status.state,status.taskGroups)"`
 - cancel: `gcloud batch jobs delete sprout-cropland-2024-v2 --location=europe-west1 --project=nature-watch-387210`
 - after it finishes: `python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml`
-- result: pending
+- result: succeeded. All 223 tasks passed, job run duration 1,405 s (23.4 minutes), submitted about 08:12 UTC on 31 October 2026. No task needed a retry that failed, and no VM is left running.
+- `collect` ran at the end: 223 records, 223 COGs.
+  - COG bytes: 2,599,341,833 (2.6 GB). The seed is 5,289,882,209 bytes, so the sprout is about half the size.
+  - Task seconds (checks, compress, recount): 8,600 s in total, 2.4 hours. Wall time per task is longer, with boot and copy.
+  - Peak memory in any task: 752,549,888 bytes (0.75 GB of the 6 GB requested).
+  - Pixels: 335,598,983,397 not cropland, 21,201,016,603 cropland, 356,800,000,000 in all, which equals 223 tiles of 1.6 Gpx. Cropland is 5.94% of the valid pixels.
+  - Cost: under $0.10 at list prices (about 2.4 task hours plus boot on spot `e2-standard-2` and about 2.6 GB of storage at about $0.05 a month).
+- Output: `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt`, `collection.json`, `cropland-2024.json`, and `tiles/` with 223 `.tif` and 223 `.json`.
+- Spot check: the VRT is 1,400,000 × 520,000 pixels, origin −170, 70, pixel 0.00025°, nodata 255, version `v2`, class values `cropland:1,not_cropland:0,nodata:255`. A 2000 × 2000 window in `30N_080E` read through the VRT equals the seed tile remapped by hand. The window was read from a local copy of the VRT and two tiles, because GDAL on this laptop cannot read `/vsigs/` from this account. A read of the VRT over `/vsigs/` is still unchecked and is the first thing Facts and Tiles need.
