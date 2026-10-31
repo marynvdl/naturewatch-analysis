@@ -228,6 +228,7 @@ def test_replace_is_passed_to_the_batch_job_only_when_asked():
 def test_an_existing_object_is_refused_without_replace(monkeypatch):
     monkeypatch.setenv(places.BATCH_ENV, "1")
     monkeypatch.setattr(places, "object_exists", lambda path: True)
+    monkeypatch.setattr(places, "object_exists_with_gcloud", lambda path: True)
     with pytest.raises(SystemExit, match="--replace"):
         places.command_run(RECIPE, Path("x.pmtiles"), True, None, False, True)
     with pytest.raises(SystemExit, match="--replace"):

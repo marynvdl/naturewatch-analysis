@@ -808,6 +808,16 @@ def object_exists(path: str) -> bool:
     return storage_client().bucket(bucket).blob(name).exists()
 
 
+def object_exists_with_gcloud(path: str) -> bool:
+    """Laptop check for submit. The laptop has gcloud login, not application credentials."""
+    listed = subprocess.run(
+        ["gcloud", "storage", "ls", path, f"--project={PROJECT}"],
+        text=True,
+        capture_output=True,
+    )
+    return listed.returncode == 0 and listed.stdout.strip() != ""
+
+
 def copy_object(source: str, destination: str) -> None:
     client = storage_client()
     src_bucket, src_name = split_gs(source)
@@ -902,7 +912,7 @@ def command_run(
 def command_submit(recipe_path: Path, replace: bool, make_valid: bool) -> None:
     recipe = load_recipe(recipe_path)
     published = places_contract(recipe)["path"]
-    if object_exists(published) and not replace:
+    if object_exists_with_gcloud(published) and not replace:
         raise SystemExit(f"{published} already exists. Submit with --replace to replace it.")
     job_id = f"places-{recipe['id']}-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}"
     gcloud(["services", "enable", "batch.googleapis.com", "secretmanager.googleapis.com"])
