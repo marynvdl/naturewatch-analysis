@@ -480,3 +480,27 @@ def test_the_tile_job_is_one_retried_spot_task_per_tile():
     assert "--upload" not in script
     assert "cropland-2024-zaf" not in script
     assert spec["environment"]["variables"]["NATUREWATCH_SPROUT_BATCH"] == "1"
+
+
+def test_the_pilot_is_one_task_that_writes_no_tile():
+    shape = cropland.job_shape(GLOBAL)
+    prefix = cropland.scratch_prefix(GLOBAL)
+    job = cropland.batch_job(
+        prefix, shape, command=cropland.PILOT_COMMAND.replace("{tile}", "30N_080E.tif")
+    )
+    group = job["taskGroups"][0]
+    assert group["taskCount"] == "1"
+    script = group["taskSpec"]["runnables"][0]["container"]["commands"][1]
+    assert "cropland.py pilot --recipe /tmp/in/recipe.json" in script
+    assert "--tile 30N_080E.tif" in script
+    assert f"--scratch {prefix}" in script
+    assert "run-tile" not in script
+
+
+def test_the_pilot_level_only_changes_the_level():
+    assert cropland.tile_cog_options() == list(cropland.TILE_COG_OPTIONS)
+    options = cropland.tile_cog_options(6)
+    assert "LEVEL=6" in options and "LEVEL=9" not in options
+    assert [o for o in options if not o.startswith("LEVEL=")] == [
+        o for o in cropland.TILE_COG_OPTIONS if not o.startswith("LEVEL=")
+    ]

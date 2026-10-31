@@ -146,6 +146,22 @@ Findings:
 - ZSTD is smaller on empty tiles and close to DEFLATE elsewhere, but an older reader may not open it. A GDAL reader is fine. Not chosen.
 - Chosen: DEFLATE level 9, no predictor. It is the smallest widely readable option. It is the slowest, about 3.4 minutes for a dense tile, which a task of 223 spreads over parallel machines. Level 6 is the fallback if a task runs long, at about 12% more storage.
 
+### Pilot
+
+A pilot is one Batch task on one seed tile. It times the copy, both counting passes, the compression at each level in `PILOT_LEVELS`, and the upload, on the machine a full run would use. It writes nothing to `tiles_path` and deletes what it uploads, so a later run still sees the tile as missing.
+
+```bash
+python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml --pilot 30N_080E.tif
+```
+
+Run on 31 October 2026, on the densest seed tile, to replace the guess below with a measurement.
+
+- job `sprout-cropland-2024-v2-pilot` in `europe-west1`, one spot `e2-standard-2` task, 30 GB disk, submitted 07:24 UTC
+- output: none
+- status: `gcloud batch jobs describe sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
+- result: pending
+
 ### Expected cost (not measured)
 
 Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. A guess of 2–5 minutes a tile on 2 vCPU gives about 8–19 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $1. With 8 tasks in parallel the wall time is about 1–2.5 hours. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.

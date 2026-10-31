@@ -19,6 +19,11 @@ VRT and STAC once every tile has its record.
   python sprout/cropland.py submit
   python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml
   python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml
+
+A pilot is one task on one tile that times each compression level and writes
+no output, so a full run is costed from a measurement rather than a guess:
+
+  python sprout/cropland.py submit --recipe ... --pilot 30N_080E.tif
 """
 from __future__ import annotations
 
@@ -839,6 +844,14 @@ TILE_COG_OPTIONS = [
 ]
 VRT_TYPE = "application/xml"
 COG_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
+# Levels the pilot times against one real tile before a full run is approved.
+PILOT_LEVELS = (6, 9)
+
+
+def tile_cog_options(level: int | None = None) -> list[str]:
+    if level is None:
+        return list(TILE_COG_OPTIONS)
+    return [f"LEVEL={level}" if o.startswith("LEVEL=") else o for o in TILE_COG_OPTIONS]
 
 
 def is_per_tile(recipe: dict) -> bool:
@@ -879,7 +892,7 @@ def require_per_tile(recipe: dict) -> None:
     relative_tile_path(recipe, "x.tif")
 
 
-def build_tile(source: Path, dest: Path, recipe: dict, work: Path) -> dict:
+def build_tile(source: Path, dest: Path, recipe: dict, work: Path, level: int | None = None) -> dict:
     """One seed tile to one Sprout COG. Returns the record kept beside it.
 
     The tile is checked and counted before it is written. The COG is counted
@@ -893,7 +906,7 @@ def build_tile(source: Path, dest: Path, recipe: dict, work: Path) -> dict:
     write_remap_vrt(source, vrt, recipe, facts["projection"])
     if dest.exists():
         dest.unlink()
-    gdal.Translate(str(dest), str(vrt), format="COG", creationOptions=list(TILE_COG_OPTIONS))
+    gdal.Translate(str(dest), str(vrt), format="COG", creationOptions=tile_cog_options(level))
     written = raster_facts(dest)
     problems = check_sprout(facts, written, recipe, overviews=False)
     if problems:
@@ -992,6 +1005,50 @@ def command_run_tile(recipe: dict, index: int, work: Path) -> None:
         for path in (local, out, work / f"{out.stem}.vrt"):
             if path.exists():
                 path.unlink()
+
+
+def command_pilot(recipe: dict, name: str, work: Path, scratch: str) -> None:
+    """Time one real tile at each compression level. Writes nothing to the sprout path.
+
+    This measures what the estimate in sprout/README.md guesses: the copy, the
+    two counting passes, the compression and the upload, on the machine a full
+    run would use. Outputs go to the scratch prefix and are deleted after they
+    are timed, so a later run still sees the tile as missing.
+    """
+    if os.environ.get(BATCH_ENV) != "1":
+        raise SystemExit(
+            "A pilot runs as a Batch task in europe-west1. From this computer, use: "
+            "python sprout/cropland.py submit --pilot <tile>"
+        )
+    require_per_tile(recipe)
+    if name not in recipe["seed"]["tiles"]:
+        raise SystemExit(f"{name} is not a seed tile in this recipe")
+    work.mkdir(parents=True, exist_ok=True)
+    gdal.SetCacheMax(512 * 1024 * 1024)
+    local = work / name
+    source = resolve_tile(recipe, name)
+    print(f"copy {source}", flush=True)
+    started = time.perf_counter()
+    vsi_copy(gs_to_vsi(source), str(local))
+    print(f"copy_seconds {time.perf_counter() - started:.1f}", flush=True)
+    print(f"seed_bytes {local.stat().st_size}", flush=True)
+    for level in PILOT_LEVELS:
+        out = work / f"pilot-{level}-{name}"
+        record = build_tile(local, out, recipe, work, level=level)
+        destination = gs_join(scratch, out.name)
+        started = time.perf_counter()
+        vsi_copy(str(out), gs_to_vsi(destination))
+        upload = time.perf_counter() - started
+        gdal.Unlink(gs_to_vsi(destination))
+        print(
+            f"level {level} bytes {record['bytes']} build_seconds {record['seconds']} "
+            f"upload_seconds {upload:.1f} counts {record['counts']}",
+            flush=True,
+        )
+        for path in (out, work / f"{out.stem}.vrt"):
+            if path.exists():
+                path.unlink()
+    local.unlink()
 
 
 def srs_wkt(crs: str) -> str:
@@ -1127,6 +1184,10 @@ RUN_COMMAND = (
 )
 TILE_COMMAND = (
     "python3 /tmp/in/cropland.py run-tile --recipe /tmp/in/recipe.json --work /tmp/work"
+)
+PILOT_COMMAND = (
+    "python3 /tmp/in/cropland.py pilot --recipe /tmp/in/recipe.json --work /tmp/work "
+    "--tile {tile} --scratch {scratch}"
 )
 
 
@@ -1276,12 +1337,14 @@ def tile_batch_job(recipe: dict, script_prefix: str, shape: dict) -> dict:
     return job
 
 
-def command_submit(recipe_path: Path) -> None:
+def command_submit(recipe_path: Path, pilot: str | None = None) -> None:
     recipe = load_recipe(recipe_path)
     per_tile = is_per_tile(recipe)
+    if pilot and not per_tile:
+        raise SystemExit("--pilot needs a per-tile recipe")
     if per_tile:
         require_per_tile(recipe)
-        job_id = f"sprout-{recipe['id']}"
+        job_id = f"sprout-{recipe['id']}-pilot" if pilot else f"sprout-{recipe['id']}"
     else:
         require_destination(recipe)
         job_id = recipe["sprout"]["id"]
@@ -1302,7 +1365,12 @@ def command_submit(recipe_path: Path) -> None:
     recipe_json.write_text(json.dumps(recipe) + "\n")
     upload_with_gcloud(Path(__file__).resolve(), gs_join(prefix, "cropland.py"))
     upload_with_gcloud(recipe_json, gs_join(prefix, "recipe.json"))
-    config = tile_batch_job(recipe, prefix, shape) if per_tile else batch_job(prefix, shape)
+    if pilot:
+        config = batch_job(prefix, shape, command=PILOT_COMMAND.replace("{tile}", pilot))
+    elif per_tile:
+        config = tile_batch_job(recipe, prefix, shape)
+    else:
+        config = batch_job(prefix, shape)
     config_path = work / "batch_job.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     print(config_path.read_text(), flush=True)
@@ -1313,9 +1381,15 @@ def command_submit(recipe_path: Path) -> None:
     )
     gcloud(["batch", "jobs", "submit", job_id, f"--location={REGION}", f"--config={config_path}"])
     print(f"submitted {job_id} in {REGION}", flush=True)
-    print(f"output {recipe['sprout']['tiles_path'] if per_tile else recipe['sprout']['path']}", flush=True)
+    if pilot:
+        print(f"output none: the pilot times {pilot} and writes nothing", flush=True)
+    else:
+        print(
+            f"output {recipe['sprout']['tiles_path'] if per_tile else recipe['sprout']['path']}",
+            flush=True,
+        )
     print_job_followup(job_id)
-    if per_tile:
+    if per_tile and not pilot:
         print(
             "when every task has finished: "
             f"python sprout/cropland.py collect --recipe {recipe_path}",
@@ -1332,7 +1406,7 @@ def peak_memory_bytes() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("run", "submit", "run-tile", "collect"))
+    parser.add_argument("command", choices=("run", "submit", "run-tile", "collect", "pilot"))
     parser.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
     parser.add_argument("--work", type=Path, default=ROOT / "data" / "sprout" / "cropland-2024")
     parser.add_argument("--upload", action="store_true")
@@ -1343,10 +1417,24 @@ def main() -> None:
         default=None,
         help="seed tile to build; a Batch task reads BATCH_TASK_INDEX when this is not set",
     )
+    parser.add_argument(
+        "--tile",
+        default=None,
+        help="seed tile the pilot times, for example 30N_080E.tif",
+    )
+    parser.add_argument(
+        "--pilot",
+        default=None,
+        help="submit a one-task job that times this tile at each level and writes no output",
+    )
     args = parser.parse_args()
     started = time.perf_counter()
     if args.command == "submit":
-        command_submit(args.recipe)
+        command_submit(args.recipe, args.pilot)
+    elif args.command == "pilot":
+        if not args.tile:
+            raise SystemExit("pilot needs --tile")
+        command_pilot(load_recipe(args.recipe), args.tile, args.work, args.scratch or "")
     elif args.command == "run-tile":
         index = args.index if args.index is not None else int(os.environ.get("BATCH_TASK_INDEX", "-1"))
         command_run_tile(load_recipe(args.recipe), index, args.work)
