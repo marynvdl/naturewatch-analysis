@@ -50,7 +50,13 @@ Two earlier submits failed in a few seconds while the container was being mounte
 
 The first submit, uid `cropland-2024-v2-f7c0999b-b228-424f-80`, was queued at `2026-10-30T13:05:15Z` and failed at `2026-10-30T13:29:10Z`. It had read all 223 tiles. GDAL then stopped because the dataset pool was 2, which is below the worker thread count. No COG was written, and the virtual machine was removed.
 
-Submitted again at `2026-10-30T15:06:21Z` as the same job name, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`. The dataset pool is 239, one handle per tile plus the worker threads. Decoded pixels stay in the 512 MB cache. Bytes stored, wall time, and peak memory wait until it finishes.
+Submitted again at `2026-10-30T15:06:21Z` as the same job name, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`. The dataset pool was 239, one handle per tile plus the worker threads. Decoded pixels stay in the 512 MB cache.
+
+That attempt did not finish inside the 12 hour limit. The checks, the mosaic (about 80 minutes), and all 12 maximum overviews took until `2026-10-30T21:10Z`. The COG write started at `21:46Z` and was at 75% at `03:02Z` on 31 October. Batch stopped the task at `03:07:26Z` with exit code 50005, which it reports as a timeout. It was not a spot interruption. Batch retried the task from the start on the same machine, and nothing from the first attempt was kept, because nothing is uploaded until the end.
+
+The retry was at overview 1, 55%, at `06:34Z`. At the same pace its COG write would again have had about 5 hours before the limit at `15:08Z`, so it would have timed out at about the same point with no retries left. The job was cancelled on 31 October with `gcloud batch jobs delete`. No COG and no STAC file were written, no virtual machine was left running, and the sprout prefix is empty. The two runs used about 15.5 hours of compute and disk, about $1.45 at list prices.
+
+What the run showed for a single global file: the whole task needs about 14 hours, the COG write alone about 7. A restart loses all of it. The next sprout run is per tile, as described under "Direction for later years".
 
 `submit --recipe cookbook/recipes/cropland-2024-v2.yaml` reads `cookbook/recipes/cropland-2024-v2.yaml` and mosaics the 223 checked tiles under `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. A tile on the Storage Transfer host path is used when both copies exist. The flat file name is the 2024 copy. There is no country clip. A 10° tile the publisher does not offer stays nodata. `0` becomes `0` and `100` becomes `1`. Any other value stops the run before the COG is written. `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` is not a destination.
 
@@ -75,7 +81,7 @@ gcloud batch jobs delete cropland-2024-v2 --location=europe-west1 --project=natu
 
 ## Expected cost
 
-Approved on 30 October 2026. The first run failed before upload. The replacement job is `cropland-2024-v2`, uid `cropland-2024-v2-24c63baa-aeb6-4f88-b0`.
+Approved on 30 October 2026 for one run of a few hours. Both global runs failed, so this estimate did not hold. See the record above for the real timing.
 
 The version 1 disk was 30 GB for a 39 MB COG. This job is sized from the global seed instead.
 
