@@ -92,7 +92,34 @@ Largest tile in bytes (compressed, as stored):
 
 Approved and submitted. Job `places-places-protected-areas-20261031103015`, `europe-west1`, spot `e2-standard-8`, 100 GB disk, `maxRunDuration` 7,200 s, command `submit --replace`. Image built for linux/amd64 from `places/Dockerfile` and pushed to Artifact Registry repository `places` (Cloud Build was refused for this account, so it was built locally). Output `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, rollback copy `v1/places.previous.pmtiles`.
 
-Status: `gcloud batch jobs describe places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`. Logs are in Cloud Logging for that job. Cancel: `gcloud batch jobs delete places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`. The run's bytes, wall time, peak memory and largest tile per zoom are printed in the job log and are not recorded here until the job finishes.
+Status: `gcloud batch jobs describe places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`.
+
+**Result: SUCCEEDED.** Running 10:31:27 to 11:08:12 UTC (Batch run duration 2,206 s). No retry.
+
+| Measure | Value |
+| --- | --- |
+| Places | 51,001 (941 with a cropland percent) |
+| Bytes stored | 677,532,109 (646 MiB). The rollback copy is 3,592,259 bytes |
+| Wall time | 2,199 s for the script; about 37 minutes for the job |
+| Peak memory | 7,925,538,816 bytes (7.4 GiB), measured in the job |
+| Zoom range | 0 to 12, layer `places` |
+| Tippecanoe | v2.79.0, flags above, validation `none` |
+| Cache-Control | `no-cache` on the replaced object |
+| Range request | 206, checked in the job and again afterwards |
+
+Proof passed at every zoom 0 to 12. Places present: zoom 0 and 1, 3,555; zoom 2, 8,372; zoom 3, 16,091; zoom 4 and 5, 29,571; zoom 6 to 12, all 51,001.
+
+Largest tile in bytes (compressed, as stored):
+
+| Zoom | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Global | 211,502 | 116,688 | 260,329 | 462,129 | 723,745 | 386,580 | 636,038 | 388,810 | 288,587 | 142,801 | 163,989 | 93,008 | 58,065 |
+
+**Findings.** Zoom 4 has a 723,745-byte tile and zoom 6 has 636,038 bytes. Both are over 500 KB, and zoom 3 is 462,129 bytes. Every place is kept, as required, so these are reported and not reduced. Peak memory was 7.4 GiB, well above the 1 GB seen in the samples, so the 32 GiB machine had room but a smaller one would need checking.
+
+**Cost.** About 37 minutes on a spot `e2-standard-8` in `europe-west1`. At my estimate of about $0.10 an hour that is roughly $0.06, plus a few cents of disk and logging. This is an estimate, not a bill. Storage is about 1.3 GB across the new archive and the rollback copy, about $0.03 a month. The database read of about 3.3 GB left the database host; check it against the plan's egress allowance.
+
+Roll back with the `gcloud storage cp` command above. The rollback copy stays until you say to remove it.
 
 ## Expected cost (estimate made before the run)
 
