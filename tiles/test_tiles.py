@@ -156,3 +156,164 @@ def test_the_laptop_cannot_start_the_tile_run():
     result = subprocess.run([sys.executable, str(SCRIPT), "run"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "Batch job" in result.stderr
+
+
+# ---- Raster PMTiles pyramid -------------------------------------------------
+
+V2_PATH = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v2.yaml"
+V2 = json.loads(json.dumps(yaml.safe_load(V2_PATH.read_text())))
+
+
+def tile(fill, spots=()):
+    out = np.full((256, 256), fill, dtype=np.uint8)
+    for row, col, value in spots:
+        out[row, col] = value
+    return out
+
+
+def test_the_v2_recipe_leaves_resampling_unset_until_a_sample_is_approved():
+    assert "resampling" not in V2["tiles"]
+    try:
+        cropland.tile_contract(V2)
+    except ValueError as error:
+        assert "unset" in str(error)
+    else:
+        raise AssertionError("an unset resampling must stop the build")
+    assert cropland.tile_contract(V2, "q3")["resampling"] == "q3"
+    for name in ("max", "q3", "nearest"):
+        assert cropland.tile_contract(V2, name)["scheme"] == "pmtiles"
+    try:
+        cropland.tile_contract(V2, "bilinear")
+    except ValueError as error:
+        assert "bilinear" in str(error)
+    else:
+        raise AssertionError("bilinear is not an allowed value")
+
+
+def test_the_version_1_recipe_still_means_xyz_and_max():
+    contract = cropland.tile_contract(RECIPE)
+    assert contract["scheme"] == "xyz"
+    assert contract["resampling"] == "max"
+
+
+def block(top_left, others):
+    """A 2 x 2 block at the top left of a child tile. Values are row-major."""
+    child = tile(0)
+    child[0, 0], child[0, 1], child[1, 0], child[1, 1] = top_left, *others
+    return child
+
+
+def test_max_keeps_one_cropland_pixel_and_ignores_nodata():
+    children = {(0, 0): block(0, (0, 0, 1)), (1, 1): block(255, (255, 255, 255))}
+    parent = cropland.reduce_children(children, "max")
+    assert parent[0, 0] == 1
+    # The block of nodata in the second child stays nodata at the parent.
+    assert parent[128, 128] == 255
+    # A missing child is nodata.
+    assert parent[0, 128] == 255 and parent[128, 0] == 255
+
+
+def test_q3_needs_more_than_a_quarter_of_the_valid_pixels():
+    one_of_four = cropland.reduce_children({(0, 0): block(1, (0, 0, 0))}, "q3")
+    two_of_four = cropland.reduce_children({(0, 0): block(1, (1, 0, 0))}, "q3")
+    one_of_three = cropland.reduce_children({(0, 0): block(1, (0, 0, 255))}, "q3")
+    assert one_of_four[0, 0] == 0
+    assert two_of_four[0, 0] == 1
+    # Three valid pixels: floor(3 / 4) = 0, so one cropland pixel is enough.
+    assert one_of_three[0, 0] == 1
+
+
+def test_q3_matches_a_sorted_third_quartile_by_nearest_rank():
+    import itertools
+
+    for values in itertools.product((0, 1), repeat=4):
+        child = block(values[0], values[1:])
+        got = cropland.reduce_children({(0, 0): child}, "q3")[0, 0]
+        ranked = sorted(values)
+        assert got == ranked[int(np.ceil(0.75 * 4)) - 1]
+
+
+def test_nearest_takes_one_child_pixel_and_loses_the_others():
+    lost = cropland.reduce_children({(0, 0): block(0, (1, 1, 1))}, "nearest")
+    kept = cropland.reduce_children({(0, 0): block(1, (0, 0, 0))}, "nearest")
+    assert lost[0, 0] == 0
+    assert kept[0, 0] == 1
+
+
+def test_an_all_nodata_parent_is_left_out():
+    for name in ("max", "q3", "nearest"):
+        assert cropland.reduce_children({(0, 0): tile(255)}, name) is None
+
+
+def pmtiles_recipe(max_zoom):
+    recipe = json.loads(json.dumps(V2))
+    recipe["tiles"]["max_zoom"] = max_zoom
+    return recipe
+
+
+def test_a_pmtiles_archive_has_every_zoom_and_readable_png_tiles(tmp_path):
+    from pmtiles.reader import Reader, MmapSource
+    from pmtiles.tile import TileType, zxy_to_tileid  # noqa: F401
+
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    sizes = {}
+    for name in ("max", "q3", "nearest"):
+        dest = tmp_path / f"{name}.pmtiles"
+        stats = cropland.build_pmtiles(source, dest, pmtiles_recipe(4), name)
+        sizes[name] = stats["bytes"]
+        assert dest.stat().st_size == stats["bytes"]
+        assert stats["min_zoom"] == 0 and stats["max_zoom"] == 4
+        assert all(stats["tiles_by_zoom"][zoom] >= 1 for zoom in range(5))
+        with open(dest, "rb") as handle:
+            reader = Reader(MmapSource(handle))
+            header = reader.header()
+            assert header["tile_type"] == TileType.PNG
+            assert header["min_zoom"] == 0 and header["max_zoom"] == 4
+            assert reader.metadata()["resampling"] == name
+            png = reader.get(0, 0, 0)
+        assert png.startswith(b"\x89PNG")
+        path = tmp_path / f"{name}.png"
+        path.write_bytes(png)
+        gray, alpha = read_png(path)
+        assert set(np.unique(gray[alpha == 255]).tolist()) <= {0, 1}
+        assert int(gray[alpha == 0].sum()) == 0
+        assert (alpha == 0).any()
+    assert all(size > 0 for size in sizes.values())
+
+
+def test_max_keeps_the_pixel_that_nearest_loses_at_a_coarse_zoom(tmp_path):
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    kept = {}
+    for name in ("max", "nearest"):
+        stats = cropland.build_pmtiles(source, tmp_path / f"{name}.pmtiles", pmtiles_recipe(4), name)
+        zooms = stats["visibility"]["zooms"]
+        kept[name] = zooms[0]["cells"]
+    assert kept["max"] >= 1
+    assert kept["max"] >= kept["nearest"]
+
+
+def test_visibility_of_max_is_every_zoom_12_pixel(tmp_path):
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    stats = cropland.build_pmtiles(source, tmp_path / "max.pmtiles", pmtiles_recipe(6), "max")
+    for zoom in (6, 5, 4):
+        assert stats["visibility"]["zooms"][zoom]["pixels_seen"] == 1.0
+
+
+def test_the_global_run_is_not_wired_for_pmtiles_yet(tmp_path):
+    recipe_path = tmp_path / "recipe.json"
+    recipe_path.write_text(json.dumps(V2))
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "submit", "--recipe", str(recipe_path)], capture_output=True, text=True
+    )
+    assert result.returncode != 0
+    assert "task 05" in result.stderr
+
+
+def test_a_byte_range_is_inclusive_and_open_ended_ranges_work():
+    assert cropland.parse_byte_range("bytes=0-15", 100) == (0, 15, True)
+    assert cropland.parse_byte_range("bytes=90-", 100) == (90, 99, True)
+    assert cropland.parse_byte_range("bytes=-10", 100) == (90, 99, True)
+    assert cropland.parse_byte_range(None, 100) == (0, 99, False)
