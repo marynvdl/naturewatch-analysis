@@ -753,7 +753,7 @@ def job_shape(recipe: dict) -> dict:
             "disk_gb": 30,
             "max_run_seconds": 7200,
             "dataset_pool_size": "16",
-            "parallelism": 8,
+            "parallelism": 32,
             "max_retries": 3,
         }
     if "clip" in recipe["seed"]:
@@ -834,7 +834,7 @@ def resolve_tile(recipe: dict, name: str) -> str:
 # is chosen by sprout/benchmark_compression.py; its numbers are in the README.
 TILE_COG_OPTIONS = [
     "COMPRESS=DEFLATE",
-    "LEVEL=9",
+    "LEVEL=6",
     "PREDICTOR=NO",  # on 0/1 classes the predictor made files about 10% larger
     "BLOCKSIZE=512",
     "OVERVIEWS=NONE",

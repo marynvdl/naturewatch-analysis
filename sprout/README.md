@@ -114,7 +114,7 @@ Replaces the global mosaic. Built on branch `sprout/cropland-2024-v2-per-tile`. 
 
 Layout, from `cookbook/recipes/cropland-2024-v2.yaml`:
 
-- `tiles/<seed tile name>.tif`: one COG per seed tile, full resolution, no overviews, DEFLATE level 9, no predictor, 512 blocks.
+- `tiles/<seed tile name>.tif`: one COG per seed tile, full resolution, no overviews, DEFLATE level 6, no predictor, 512 blocks.
 - `tiles/<seed tile name>.json`: a record of bytes, size, transform, counts, seconds and peak memory. It is written last, so a tile without a record is not finished.
 - `cropland-2024.vrt`, `collection.json`, `cropland-2024.json`: the collection VRT and two static STAC files. They are written by `collect` once every tile has a record.
 
@@ -144,7 +144,7 @@ Findings:
 - The predictor makes these 0/1 tiles about 10% larger. The global run used it.
 - Window reads took 10–20 ms for every codec, so read speed does not separate them.
 - ZSTD is smaller on empty tiles and close to DEFLATE elsewhere, but an older reader may not open it. A GDAL reader is fine. Not chosen.
-- Chosen: DEFLATE level 9, no predictor. It is the smallest widely readable option. It is the slowest, about 3.4 minutes for a dense tile, which a task of 223 spreads over parallel machines. Level 6 is the fallback if a task runs long, at about 12% more storage.
+- Chosen after the pilot: DEFLATE level 6, no predictor. Level 9 is about 13% smaller but 5.3 times slower on the densest tile, and 13% of about 5 GB is a cent a month. Level 6 keeps a retried tile short.
 
 ### Pilot
 
@@ -171,7 +171,7 @@ Level 9 is 13% smaller and 5.3 times slower. The benchmark's 3.4 minute guess fo
 
 ### Expected cost (not measured)
 
-Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. A guess of 2–5 minutes a tile on 2 vCPU gives about 8–19 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $1. With 8 tasks in parallel the wall time is about 1–2.5 hours. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
+Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. The pilot measured the densest tile at 53 s of build at level 6, so the worst case is about 223 minutes and the likely total is about 2 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $0.10. With 32 tasks in parallel (64 vCPUs, subject to the regional spot quota, which only slows the run) the wall time is about 15–30 minutes. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
 
 A first run of one dense tile is the cheap way to replace the guess with a measurement. Nothing is submitted until the cost is approved.
 
@@ -182,3 +182,14 @@ A first run of one dense tile is the cheap way to replace the guess with a measu
 - Tasks 04 to 06 in `docs/tasks/` and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
 - The global mosaic code in `sprout/cropland.py` (`mosaic_canvas`, `write_mosaic_sprout`) is superseded and left in place. Remove it once the per-tile run is accepted.
 - Still to check: a VRT over private `/vsigs/` paths in both readers.
+
+## Per-tile run record
+
+Submitted 31 October 2026 at 08:01 UTC after the pilot, at your approval: DEFLATE level 6, 32 tasks in parallel, up to 3 retries per tile.
+
+- job `sprout-cropland-2024-v2`, 223 tasks, spot `e2-standard-2`, `europe-west1`
+- output: `gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/`
+- status: `gcloud batch jobs describe sprout-cropland-2024-v2 --location=europe-west1 --project=nature-watch-387210 --format="yaml(status.state,status.taskGroups)"`
+- cancel: `gcloud batch jobs delete sprout-cropland-2024-v2 --location=europe-west1 --project=nature-watch-387210`
+- after it finishes: `python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml`
+- result: pending
