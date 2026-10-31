@@ -753,7 +753,7 @@ def job_shape(recipe: dict) -> dict:
             "disk_gb": 30,
             "max_run_seconds": 7200,
             "dataset_pool_size": "16",
-            "parallelism": 32,
+            "parallelism": 20,  # the project allows 24 VMs at once in europe-west1
             "max_retries": 3,
         }
     if "clip" in recipe["seed"]:
