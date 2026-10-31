@@ -107,3 +107,55 @@ Decided on 30 October 2026, while job `cropland-2024-v2` was running. This is no
 The finest zoom is not the source pixel. At zoom 12 one 256-pixel tile pixel is about 38 m at the equator, and GLAD is 0.00025°, about 28 m. Keeping original pixels at the finest zoom needs a higher `max_zoom` in the recipe, such as 13. That is about four times the tiles, so it is an open decision for task 04.
 
 Consequences for the version 2 tasks. Task 04's `max` against `q3` sample must be built from full-resolution pixels, not from the global COG's maximum overviews, or both samples will start from maximums. Facts is not affected, because it counts full-resolution pixels. Task 06 can read the global COG this year.
+
+## Per-tile run (version 2, next run)
+
+Replaces the global mosaic. Built on branch `sprout/cropland-2024-v2-per-tile`. Not yet run.
+
+Layout, from `cookbook/recipes/cropland-2024-v2.yaml`:
+
+- `tiles/<seed tile name>.tif`: one COG per seed tile, full resolution, no overviews, DEFLATE level 9, no predictor, 512 blocks.
+- `tiles/<seed tile name>.json`: a record of bytes, size, transform, counts, seconds and peak memory. It is written last, so a tile without a record is not finished.
+- `cropland-2024.vrt`, `collection.json`, `cropland-2024.json`: the collection VRT and two static STAC files. They are written by `collect` once every tile has a record.
+
+```bash
+python sprout/cropland.py submit --recipe cookbook/recipes/cropland-2024-v2.yaml   # one Batch task per tile
+python sprout/cropland.py collect --recipe cookbook/recipes/cropland-2024-v2.yaml --work data/sprout/collect
+```
+
+Resume. A task skips a tile whose record exists and whose COG size matches the record. A retry or a rerun redoes only the missing or failed tiles. Batch retries a task up to 3 times, and retries a spot preemption (exit 50001) separately. A failure costs one tile, not the run. Cancel and status commands are printed by `submit`.
+
+### Compression benchmark
+
+`sprout/benchmark_compression.py`, run on 31 October 2026 with GDAL 3.11.4 and 2 threads. It cuts a 5,000 × 5,000 window from the middle of three seed tiles and extrapolates to a whole tile (×64). The extrapolation is rough. For the dense tile it gives 70–80 MB where the seed tile is 68 MB.
+
+| Codec | Dense `30N_080E` MB | Mixed `20S_020E` MB | Empty `00N_160E` MB | Dense write min |
+| --- | --- | --- | --- | --- |
+| deflate-9, no predictor | 69.7 | 22.8 | 1.9 | 3.4 |
+| deflate-9 + predictor (global run) | 79.6 | 25.3 | 1.9 | 2.5 |
+| deflate-6, no predictor | 80.9 | 25.8 | 1.9 | 0.4 |
+| lzw, no predictor | 70.2 | 26.7 | 5.8 | 0.3 |
+| zstd-15, no predictor | 76.5 | 23.3 | 0.3 | 0.8 |
+| zstd-9, no predictor | 79.6 | 24.4 | 0.3 | 0.3 |
+| deflate-6 + predictor | 91.4 | 28.6 | 1.9 | 0.4 |
+
+Findings:
+
+- The predictor makes these 0/1 tiles about 10% larger. The global run used it.
+- Window reads took 10–20 ms for every codec, so read speed does not separate them.
+- ZSTD is smaller on empty tiles and close to DEFLATE elsewhere, but an older reader may not open it. A GDAL reader is fine. Not chosen.
+- Chosen: DEFLATE level 9, no predictor. It is the smallest widely readable option. It is the slowest, about 3.4 minutes for a dense tile, which a task of 223 spreads over parallel machines. Level 6 is the fallback if a task runs long, at about 12% more storage.
+
+### Expected cost (not measured)
+
+Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. A guess of 2–5 minutes a tile on 2 vCPU gives about 8–19 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $1. With 8 tasks in parallel the wall time is about 1–2.5 hours. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
+
+A first run of one dense tile is the cheap way to replace the guess with a measurement. Nothing is submitted until the cost is approved.
+
+### Downstream changes still needed
+
+- Facts, `facts/cropland.py`: `require_sprout` expects one COG's layout metadata, and `window_limits` opens one raster. It must open the VRT, or only the tiles a place touches.
+- Tiles, `tiles/cropland.py`: `materialize_sprout` copies one file. It must read the collection and build its own pyramid with the recipe's `tiles.resampling`.
+- Tasks 04 to 06 in `docs/tasks/` and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
+- The global mosaic code in `sprout/cropland.py` (`mosaic_canvas`, `write_mosaic_sprout`) is superseded and left in place. Remove it once the per-tile run is accepted.
+- Still to check: a VRT over private `/vsigs/` paths in both readers.

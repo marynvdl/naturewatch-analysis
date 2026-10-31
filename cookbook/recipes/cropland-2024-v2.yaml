@@ -252,7 +252,11 @@ seed:
     nodata: null
 sprout:
   id: cropland-2024-v2
-  path: gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.tif
+  # One COG per seed tile under tiles_path, full-resolution classes, no overviews.
+  # path is the VRT over them. Facts and Tiles read path. Resampling is Tiles' job.
+  layout: per-tile
+  path: gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt
+  tiles_path: gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/
   values:
     cropland: 1
     not_cropland: 0
