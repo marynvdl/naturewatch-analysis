@@ -71,7 +71,7 @@ python tiles/cropland.py build --recipe cookbook/recipes/cropland-2024-v2.yaml \
 python tiles/cropland.py preview --dest <folder with max, q3 and nearest .pmtiles>
 ```
 
-The recipe's `tiles.resampling` stays unset until a choice is approved. `--resampling` names one for a local sample and is refused if the recipe sets a different one. Allowed values: `max`, `q3`, `q2`, `nearest`. `q2` was added after the first sample, at the request of the reviewer; the task text lists three.
+The recipe's `tiles.resampling` stays unset until a choice is approved. `--resampling` names one for a local sample and is refused if the recipe sets a different one. Allowed values: `max`, `q3`, `q2`, `nearest`, and `fraction` with a `tiles.threshold` (or `--threshold`) above 0 and below 1. `q2` was added after the first sample, at the request of the reviewer; the task text lists three.
 
 ### How the pyramid is built
 
@@ -136,6 +136,35 @@ A q3 or q2 of child values against the same quantile taken from the source pixel
 | 4 | 17 | 8 | 1 of 30 (3.3%) | 1 | 5 | 5 (16.7%) |
 
 The pyramid q3 draws a little more cropland than a direct q3 (6% more cells at zoom 8, 13% at zoom 6). The pyramid q2 draws less than a direct q2 (19% fewer cells at zoom 8, 45% fewer at zoom 6), so q2 is the choice where building from children departs most from the source. At zoom 4 the counts are too small to carry weight.
+
+### Average, then threshold (`fraction`)
+
+`q3` and `q2` threshold at every level and pass 0 and 1 up, so each step rounds away some of the minority class. `fraction` carries the cropland share instead. A zoom 12 cell holds the share of valid source pixels under it (GDAL average resampling, nodata left out). A parent holds the weighted mean of its four children, weighted by their valid zoom 12 cells, so at every zoom it is the share of valid zoom 12 cells under the cell. A threshold is applied once, when the PNG is written: cropland when the share is above it. The PNGs stay binary class values. `--resampling fraction --threshold 0.35` builds it, and pytest checks that the pyramid share matches a share taken from the source.
+
+Every sample was judged against the same truth, the cropland share from the source at each zoom. True cropland area in the window is 465 km². Per zoom: shown area over true area / recall (share of true cropland area under a drawn cell) / precision (share of drawn area that is cropland). `max` and `q3` get their recall by drawing too much. Areas are exact cell areas at each latitude.
+
+| Choice | Bytes | Zoom 12 | Zoom 8 | Zoom 6 | Zoom 4 |
+| --- | --- | --- | --- | --- | --- |
+| `max` | 88,750 | 1.08 / 100% / 92% | 1.57 / 100% / 64% | 2.25 / 100% / 44% | 3.85 / 100% / 26% |
+| `q3` | 90,552 | 1.08 / 100% / 92% | 1.30 / 98% / 75% | 1.51 / 97% / 64% | 1.82 / 97% / 54% |
+| `q2` | 91,561 | 1.08 / 100% / 92% | 0.85 / 78% / 92% | 0.55 / 49% / 89% | 0.11 / 9% / 87% |
+| `nearest` | 92,777 | 1.08 / 100% / 92% | 1.05 / 84% / 79% | 1.08 / 72% / 67% | 1.18 / 62% / 52% |
+| `fraction` > 0.1 | 93,342 | 1.06 / 100% / 94% | 1.36 / 99% / 73% | 1.58 / 99% / 62% | 1.71 / 97% / 57% |
+| `fraction` > 0.25 | 96,161 | 1.04 / 99% / 96% | 1.23 / 97% / 79% | 1.38 / 95% / 69% | 1.61 / 95% / 59% |
+| `fraction` > 0.35 | 97,350 | 1.02 / 99% / 97% | 1.16 / 95% / 82% | 1.28 / 92% / 72% | 1.39 / 89% / 64% |
+| `fraction` > 0.5 | 98,513 | 1.00 / 98% / 98% | 1.04 / 90% / 86% | 1.04 / 82% / 79% | 0.96 / 71% / 73% |
+
+Reading it.
+- At every threshold `fraction` is at least as good as `nearest` on both recall and precision at zooms 8, 6 and 4. `nearest` at zoom 6 draws 1.08 of the true area, but only 72% of the true cropland is under a drawn cell and 67% of what is drawn is cropland.
+- `fraction` > 0.5 is the closest to the true area: 1.00 at zoom 12, 1.04 at zooms 8 and 6, 0.96 at zoom 4. It gives up recall to get it: 90%, 82%, 71%.
+- `fraction` > 0.35 is the middle choice: 1.16 / 1.28 / 1.39 of the true area at zooms 8 / 6 / 4, recall 95% / 92% / 89%, precision 82% / 72% / 64%.
+- `q3` keeps 97% recall at every zoom but its precision falls to 54% at zoom 4, so about half of what it draws is not cropland. `fraction` > 0.1 behaves like it.
+- `q2` loses recall quickly (9% at zoom 4) and is not worth considering.
+- Because the share is carried, the threshold can change per zoom, for example lower at coarse zooms where cells are mixed. That is a recipe field, not a different method.
+- The archive is 5% to 11% larger than `max` (93–99 KB against 89 KB), since more cells are mixed. Storing the share in the gray value at coarse zooms is another option. It changes the "class value" encoding and is not built.
+- Cost: no more than the others on this window. The extra work is one weighted mean per parent. Memory per in-flight tile roughly triples. The zoom 12 warp and PNG encoding still dominate.
+
+The wall times and peak memory in the table above were taken before this section and without the comparison pass. Runs of `max`, `q3`, `q2` and `nearest` now also build a share pyramid for the comparison, so their latest peak memory (208–239 MB) is higher than in that table. The `fraction` runs peaked at 203–213 MB with a wall time of 0.83–0.85 s.
 
 ### Does Mapbox GL JS read it?
 
