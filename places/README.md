@@ -88,7 +88,13 @@ Largest tile in bytes (compressed, as stored):
 
 **Finding.** Germany and Benelux has a zoom 6 tile of 636,038 bytes, above the 500 KB mark, and zoom 4 and 5 are near 340 to 350 KB. This is with every place kept and no cap. It is what keeping all places at zoom 6 costs in dense regions. The global archive is likely to have similar or larger tiles. Reported, not reduced.
 
-## Expected cost, waiting for approval
+## Hosted run, submitted 31 October 2026
+
+Approved and submitted. Job `places-places-protected-areas-20261031103015`, `europe-west1`, spot `e2-standard-8`, 100 GB disk, `maxRunDuration` 7,200 s, command `submit --replace`. Image built for linux/amd64 from `places/Dockerfile` and pushed to Artifact Registry repository `places` (Cloud Build was refused for this account, so it was built locally). Output `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, rollback copy `v1/places.previous.pmtiles`.
+
+Status: `gcloud batch jobs describe places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`. Logs are in Cloud Logging for that job. Cancel: `gcloud batch jobs delete places-places-protected-areas-20261031103015 --location=europe-west1 --project=nature-watch-387210`. The run's bytes, wall time, peak memory and largest tile per zoom are printed in the job log and are not recorded here until the job finishes.
+
+## Expected cost (estimate made before the run)
 
 Not run. Estimates from the samples and from the database (read only): 51,001 places, 3,284 MB stored geometry, 214.8 million vertices. The Benelux window is 22.8 million vertices, so the global build is about 9.4 times that.
 
