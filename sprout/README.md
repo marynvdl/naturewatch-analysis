@@ -171,7 +171,7 @@ Level 9 is 13% smaller and 5.3 times slower. The benchmark's 3.4 minute guess fo
 
 ### Expected cost (not measured)
 
-Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. The pilot measured the densest tile at 53 s of build at level 6, so the worst case is about 223 minutes and the likely total is about 2 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $0.10. With 32 tasks in parallel (64 vCPUs, subject to the regional spot quota, which only slows the run) the wall time is about 15–30 minutes. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
+Per tile: copy 5–68 MB, two counting passes over 1.6 Gpx, compress, upload. The pilot measured the densest tile at 53 s of build at level 6, so the worst case is about 223 minutes and the likely total is about 2 compute hours. On spot `e2-standard-2` at about $0.03–0.04 an hour that is under $0.10. With 20 tasks in parallel (the project quota is 24 VMs) the wall time is about 20–40 minutes. Disk is 30 GB per task, for hours. Reading the seed in the same EU bucket has no egress. The output is about 4–5 GB, about $0.10 a month.
 
 A first run of one dense tile is the cheap way to replace the guess with a measurement. Nothing is submitted until the cost is approved.
 
@@ -185,7 +185,9 @@ A first run of one dense tile is the cheap way to replace the guess with a measu
 
 ## Per-tile run record
 
-Submitted 31 October 2026 at 08:01 UTC after the pilot, at your approval: DEFLATE level 6, 32 tasks in parallel, up to 3 retries per tile.
+First submit 31 October 2026 at 08:01 UTC asked for 32 tasks in parallel. The project allows 24 VMs at once in `europe-west1` (`QUOTA_FOR_INSTANCES`), so Batch could not start any task and the job sat in `QUEUED`. It was cancelled at about 08:10 UTC with no output and no cost. Parallelism is now 20.
+
+Second submit, about 08:12 UTC: DEFLATE level 6, 20 tasks in parallel, up to 3 retries per tile.
 
 - job `sprout-cropland-2024-v2`, 223 tasks, spot `e2-standard-2`, `europe-west1`
 - output: `gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/`
