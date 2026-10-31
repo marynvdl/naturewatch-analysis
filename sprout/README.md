@@ -160,7 +160,14 @@ Run on 31 October 2026, on the densest seed tile, to replace the guess below wit
 - output: none
 - status: `gcloud batch jobs describe sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete sprout-cropland-2024-v2-pilot --location=europe-west1 --project=nature-watch-387210`
-- result: pending
+- result: succeeded, 339 s from start to finish (queued 07:24:19Z, running 07:25:16Z, done 07:30:55Z). No machine left running, nothing written to `tiles_path`. Seed tile 67,761,486 bytes, copied in 1.4 s. Peak memory 739 MB of the 6 GB requested. Counts match the seed at both levels: 1,009,505,114 zeros and 590,494,886 ones.
+
+| Level | COG bytes | Build s (checks, compress, recount) | Upload s |
+| --- | --- | --- | --- |
+| 6 | 62,888,963 | 52.6 | 1.3 |
+| 9 | 54,794,031 | 278.6 | 1.2 |
+
+Level 9 is 13% smaller and 5.3 times slower. The benchmark's 3.4 minute guess for level 9 was low; the measured time is 4.6 minutes.
 
 ### Expected cost (not measured)
 
