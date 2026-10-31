@@ -71,7 +71,7 @@ python tiles/cropland.py build --recipe cookbook/recipes/cropland-2024-v2.yaml \
 python tiles/cropland.py preview --dest <folder with max, q3 and nearest .pmtiles>
 ```
 
-The recipe's `tiles.resampling` stays unset until a choice is approved. `--resampling` names one for a local sample and is refused if the recipe sets a different one. Allowed values: `max`, `q3`, `nearest`.
+The recipe's `tiles.resampling` stays unset until a choice is approved. `--resampling` names one for a local sample and is refused if the recipe sets a different one. Allowed values: `max`, `q3`, `q2`, `nearest`. `q2` was added after the first sample, at the request of the reviewer; the task text lists three.
 
 ### How the pyramid is built
 
@@ -81,6 +81,7 @@ Zoom 12 is warped from the source once per tile, with maximum resampling. Every 
 | --- | --- |
 | `max` | the largest valid class among its four children. Exact. One cropland pixel survives at any zoom. |
 | `q3` | the third quartile of the valid child classes, by nearest rank: the value at rank ceil(0.75 n) of n sorted values. For classes 0 and 1 that is cropland when more than a quarter of the valid child pixels are cropland (more than floor(n/4) of n). |
+| `q2` | the median of the valid child classes, by nearest rank: cropland when more than floor(n/2) of n valid pixels are cropland (3 of 4, 2 of 3, 2 of 2). |
 | `nearest` | the top left child pixel. Cropland on the other three is lost. |
 
 A q3 of q3 values is an approximation of a q3 taken over the source pixels. It is checked below against a direct q3 from the source: a cell is cropland when more than a quarter of the valid source pixels under it are cropland, using GDAL average resampling on 0 and 1.
@@ -95,55 +96,58 @@ Zoom 12 has 56 tiles in the window. Zoom 12 draws 488,256 cropland pixels, about
 
 ### Result per sample
 
-Local run on 31 October 2026, laptop, GDAL 3.11.4, Python 3.14, one process per sample. Wall time includes cutting the window. Peak memory is the process maximum resident size; the q3 run also holds the comparison.
+Local run on 31 October 2026, laptop, GDAL 3.11.4, Python 3.14, one process per sample. Wall time includes cutting the window. Peak memory is the process maximum resident size; the q3 and q2 runs also hold the comparison with the source.
 
-| | `max` | `q3` | `nearest` |
-| --- | --- | --- | --- |
-| Archive bytes | 88,750 | 90,552 | 92,777 |
-| Tiles (zooms 0–12) | 98 | 98 | 98 |
-| Wall time | 0.72 s | 0.78 s | 0.68 s |
-| Peak memory | 107,757,568 | 145,604,608 | 110,215,168 |
-| Zoom 12 cropland pixels still shown at zoom 8 | 100.0% | 97.5% | 82.3% |
-| at zoom 6 | 100.0% | 96.6% | 73.8% |
-| at zoom 4 | 100.0% | 96.4% | 65.3% |
+| | `max` | `q3` | `q2` | `nearest` |
+| --- | --- | --- | --- | --- |
+| Archive bytes | 88,750 | 90,552 | 91,561 | 92,777 |
+| Tiles (zooms 0–12) | 98 | 98 | 98 | 98 |
+| Wall time | 0.70 s | 0.78 s | 0.81 s | 0.67 s |
+| Peak memory | 113,852,416 | 150,667,264 | 160,153,600 | 110,346,240 |
+| Zoom 12 cropland pixels still shown at zoom 8 | 100.0% | 97.5% | 74.5% | 82.3% |
+| at zoom 6 | 100.0% | 96.6% | 48.0% | 73.8% |
+| at zoom 4 | 100.0% | 96.4% | 6.0% | 65.3% |
 
-Tiles per zoom 0–12: 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 6, 20, 56. The tile count is the same for every choice because the tiles are the same; only the pixels differ. The archive is about 7% smaller than the sum of its PNG files for `max`, because the writer stores identical tiles once.
+`q2` is the median by nearest rank: a parent cell is cropland when more than half of its valid child pixels are cropland. Tiles per zoom 0–12: 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 6, 20, 56. The tile count is the same for every choice because the tiles are the same; only the pixels differ. The archive is about 7% smaller than the sum of its PNG files for `max`, because the writer stores identical tiles once.
 
 "Still shown" is the share of zoom 12 cropland pixels whose cell at that zoom is cropland.
 
 Cropland area kept compared with zoom 12 (cells × 4^(12 − zoom) divided by zoom 12 cropland pixels; 1.00 is the same area):
 
-| Zoom | `max` | `q3` | `nearest` |
-| --- | --- | --- | --- |
-| 10 | 1.16 | 1.08 | 1.00 |
-| 8 | 1.46 | 1.22 | 0.98 |
-| 6 | 2.16 | 1.45 | 1.03 |
-| 4 | 4.83 | 2.28 | 1.48 |
-
-Reading it. `max` never loses a field but draws more cropland at each coarser zoom, 4.8 times the area at zoom 4. `nearest` keeps about the right total area, but 18% of the pixels at zoom 8 and 35% at zoom 4 are gone, so small fields vanish and the area that stays is a random subset (the 1.48 at zoom 4 is from only 11 cells). `q3` loses 2.5% to 3.6% of the pixels and overdraws less than `max`.
-
-### q3 of q3 against q3 from the source
-
-| Zoom | Pyramid cropland cells | Direct from source | Cells compared | Cells that differ |
+| Zoom | `max` | `q3` | `q2` | `nearest` |
 | --- | --- | --- | --- | --- |
-| 8 | 2,318 | 2,188 | 10,120 | 146 (1.4%) |
-| 6 | 173 | 153 | 621 | 16 (2.6%) |
-| 4 | 17 | 8 | 30 | 1 (3.3%) |
+| 10 | 1.16 | 1.08 | 0.93 | 1.00 |
+| 8 | 1.46 | 1.22 | 0.79 | 0.98 |
+| 6 | 2.16 | 1.45 | 0.53 | 1.03 |
+| 4 | 4.83 | 2.28 | 0.13 | 1.48 |
 
-The pyramid q3 draws a little more cropland than a direct q3: 6% more cells at zoom 8, 13% at zoom 6. The two agree on 97–99% of the cells. At zoom 4 the counts are too small to carry weight.
+Reading it. `max` never loses a field but draws more cropland at each coarser zoom, 4.8 times the area at zoom 4. `nearest` keeps about the right total area, but 18% of the pixels at zoom 8 and 35% at zoom 4 are gone, and what stays is a random subset (the 1.48 at zoom 4 is from only 11 cells). `q3` loses 2.5% to 3.6% of the pixels and overdraws less than `max`.
+
+`q2` does not sit between `q3` and `nearest`. It is close to `nearest` at zoom 10 and 8, then it erodes. A median of medians keeps the majority class at every step, so a window that is 28% cropland loses it: at zoom 6 about half the area, at zoom 4 about an eighth (one cell). A median is a poor choice for a pyramid when the class of interest is the minority. Between `q3` and `nearest` a lower threshold than 0.25 but above 0 (for example 0.125) would keep more than `q2`, but it is the same idea as `max` with a tail cut, and it has not been built.
+
+### q3 and q2 against the source
+
+A q3 or q2 of child values against the same quantile taken from the source pixels (cropland when more than 25% or 50% of the valid source pixels under the cell are cropland).
+
+| Zoom | q3 pyramid cells | q3 from source | q3 cells that differ | q2 pyramid cells | q2 from source | q2 cells that differ |
+| --- | --- | --- | --- | --- | --- | --- |
+| 8 | 2,318 | 2,188 | 146 of 10,120 (1.4%) | 1,510 | 1,853 | 347 (3.4%) |
+| 6 | 173 | 153 | 16 of 621 (2.6%) | 63 | 115 | 53 (8.5%) |
+| 4 | 17 | 8 | 1 of 30 (3.3%) | 1 | 5 | 5 (16.7%) |
+
+The pyramid q3 draws a little more cropland than a direct q3 (6% more cells at zoom 8, 13% at zoom 6). The pyramid q2 draws less than a direct q2 (19% fewer cells at zoom 8, 45% fewer at zoom 6), so q2 is the choice where building from children departs most from the source. At zoom 4 the counts are too small to carry weight.
 
 ### Does Mapbox GL JS read it?
 
-No, not directly. The app uses `mapbox-gl` `^3.11.0`. The sample preview reads the archive with the `pmtiles` JavaScript library through `maplibregl.addProtocol`, and MapLibre reads it by byte ranges. Mapbox GL JS has no `addProtocol` and no public custom source type. This was checked on 31 October 2026 in 3.9.4 in a browser and in the 3.34.1 file (the latest); neither contains `addProtocol`. A raster source in Mapbox GL JS takes `http(s)` tile URLs, and `transformRequest` can only change the URL or headers, not supply the bytes. The `pmtiles://` URL therefore fails to load, and no layer appears. Mapbox itself was not loaded with a token, so the failure was not seen on screen.
+Yes, from `mapbox-gl` 3.23.0, as a raster source whose `url` ends in `.pmtiles`. Checked on 31 October 2026 with a public token from `MAPBOX_ACCESS_TOKEN`, in a browser, on `max.pmtiles` served with Range requests, using a blank style and `{type: "raster", url: ".../max.pmtiles"}`. The window drew and no error was raised in 3.23.0, 3.24.0, 3.26.0, 3.28.0, 3.30.0, 3.32.0 and 3.34.1.
 
-If the app cannot read the archive, the app task has these ways out. Each costs something:
+| `mapbox-gl` | Raster `.pmtiles` source |
+| --- | --- |
+| 3.11.0 (the app's lock file) | fails: `Unexpected token 'P', "PMTiles..." is not valid JSON` |
+| 3.21.0, 3.22.0 | fails with the same error |
+| 3.23.0 and later | works |
 
-- Put a small service in front of the archive that answers `{z}/{x}/{y}.png` by reading one byte range from the PMTiles object. Mapbox then reads ordinary XYZ URLs. It is a new running service and its cost.
-- Draw the archive with a Mapbox custom layer that fetches tiles with the `pmtiles` JavaScript library. More client code.
-- Move the map to MapLibre, which the preview already uses. Larger change.
-- Keep individual XYZ PNG files for the app (version 1 layout) and use the archive for something else. Millions of objects globally.
-
-This needs a decision before task 07 and before task 05 is worth building.
+The app's `package.json` allows `^3.11.0` and the lock file says 3.11.0, while `node_modules` holds 3.34.1. The app task must pin `mapbox-gl` at 3.23.0 or later. An earlier note here said Mapbox could not read the archive. That was wrong. It came from searching the library for `addProtocol`, which MapLibre uses and Mapbox does not. Mapbox 3.23 and later has a built-in PMTiles tile provider instead.
 
 ### Estimate for the global archive
 
@@ -176,7 +180,7 @@ No cloud cost. The sample ran on the laptop and stayed there. It read one 3.2 MB
 python tiles/cropland.py preview --dest data/tiles/sample/out
 ```
 
-Open `http://127.0.0.1:8766/preview.html`. Three maps move together: `max`, `q3`, `nearest`. The server answers HTTP Range requests (206), like the places preview. A plain `python -m http.server` often returns the whole file. Colour is applied in the page: class 1 orange, class 0 faint green, nodata clear. The basemap is Esri World Street Map, for a local look only. Cancel with Ctrl+C.
+Open `http://127.0.0.1:8766/preview.html`. Four maps move together: `max`, `q3`, `q2`, `nearest`. The server answers HTTP Range requests (206), like the places preview. A plain `python -m http.server` often returns the whole file. Colour is applied in the page: class 1 orange, class 0 faint green, nodata clear. The basemap is Esri World Street Map, for a local look only. Cancel with Ctrl+C.
 
 ### Approval
 

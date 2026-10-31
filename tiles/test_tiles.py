@@ -180,7 +180,7 @@ def test_the_v2_recipe_leaves_resampling_unset_until_a_sample_is_approved():
     else:
         raise AssertionError("an unset resampling must stop the build")
     assert cropland.tile_contract(V2, "q3")["resampling"] == "q3"
-    for name in ("max", "q3", "nearest"):
+    for name in ("max", "q3", "q2", "nearest"):
         assert cropland.tile_contract(V2, name)["scheme"] == "pmtiles"
     try:
         cropland.tile_contract(V2, "bilinear")
@@ -233,6 +233,16 @@ def test_q3_matches_a_sorted_third_quartile_by_nearest_rank():
         assert got == ranked[int(np.ceil(0.75 * 4)) - 1]
 
 
+def test_q2_is_the_median_by_nearest_rank():
+    import itertools
+
+    for values in itertools.product((0, 1), repeat=4):
+        got = cropland.reduce_children({(0, 0): block(values[0], values[1:])}, "q2")[0, 0]
+        assert got == sorted(values)[int(np.ceil(0.5 * 4)) - 1]
+    assert cropland.reduce_children({(0, 0): block(1, (1, 0, 255))}, "q2")[0, 0] == 1
+    assert cropland.reduce_children({(0, 0): block(1, (0, 255, 255))}, "q2")[0, 0] == 0
+
+
 def test_nearest_takes_one_child_pixel_and_loses_the_others():
     lost = cropland.reduce_children({(0, 0): block(0, (1, 1, 1))}, "nearest")
     kept = cropland.reduce_children({(0, 0): block(1, (0, 0, 0))}, "nearest")
@@ -241,7 +251,7 @@ def test_nearest_takes_one_child_pixel_and_loses_the_others():
 
 
 def test_an_all_nodata_parent_is_left_out():
-    for name in ("max", "q3", "nearest"):
+    for name in ("max", "q3", "q2", "nearest"):
         assert cropland.reduce_children({(0, 0): tile(255)}, name) is None
 
 
@@ -258,7 +268,7 @@ def test_a_pmtiles_archive_has_every_zoom_and_readable_png_tiles(tmp_path):
     source = tmp_path / "sprout.tif"
     write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
     sizes = {}
-    for name in ("max", "q3", "nearest"):
+    for name in ("max", "q3", "q2", "nearest"):
         dest = tmp_path / f"{name}.pmtiles"
         stats = cropland.build_pmtiles(source, dest, pmtiles_recipe(4), name)
         sizes[name] = stats["bytes"]

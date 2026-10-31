@@ -64,7 +64,7 @@ def published_values(recipe: dict) -> dict[str, int]:
     return {name: int(value) for name, value in recipe["sprout"]["values"].items()}
 
 
-RESAMPLINGS = ("max", "q3", "nearest")
+RESAMPLINGS = ("max", "q3", "q2", "nearest")
 
 
 def tile_contract(recipe: dict, resampling: str | None = None) -> dict:
@@ -297,6 +297,9 @@ def reduce_children(children: dict[tuple[int, int], np.ndarray], resampling: str
              that is cropland when more than a quarter of the valid pixels are
              cropland, since the value at that rank is 1 exactly when
              cropland > n - ceil(0.75 n) = floor(n / 4).
+    q2       the median of the valid classes, by nearest rank: the value at rank
+             ceil(0.5 n). With classes 0 and 1 that is cropland when more than
+             floor(n / 2) of the n valid pixels are cropland: 3 of 4, 2 of 3, 2 of 2.
     nearest  the top left pixel of the block, valid or not.
     """
     if not children:
@@ -315,6 +318,8 @@ def reduce_children(children: dict[tuple[int, int], np.ndarray], resampling: str
             picked = cropland > 0
         elif resampling == "q3":
             picked = cropland > count // 4
+        elif resampling == "q2":
+            picked = cropland > count // 2
         else:
             raise ValueError(f"unknown resampling {resampling}")
         out = np.where(count == 0, NODATA, picked.astype(np.uint8)).astype(np.uint8)
@@ -436,11 +441,11 @@ def zoom_visibility(levels: dict[int, dict], top: int) -> dict:
     return {"zoom12_cropland_pixels": base, "zooms": rows}
 
 
-def q3_from_source(source: Path, zoom: int, tiles: list[tuple[int, int]], nodata: int) -> dict:
-    """Third quartile straight from source pixels, for the tiles given.
+def q3_from_source(source: Path, zoom: int, tiles: list[tuple[int, int]], nodata: int, threshold: float = 0.25) -> dict:
+    """A quantile straight from source pixels, for the tiles given.
 
-    The cell is cropland when more than a quarter of the valid source pixels under it are
-    cropland. GDAL's average resampling weights each source pixel by the overlap.
+    The cell is cropland when more than threshold of the valid source pixels under it are
+    cropland: 0.25 is the third quartile, 0.5 the median. GDAL's average resampling weights each source pixel by the overlap.
     """
     out = {}
     for x, y in tiles:
@@ -459,18 +464,20 @@ def q3_from_source(source: Path, zoom: int, tiles: list[tuple[int, int]], nodata
         )
         share = dataset.GetRasterBand(1).ReadAsArray()
         dataset = None
-        values = np.where(share < 0, NODATA, (share > 0.25).astype(np.uint8)).astype(np.uint8)
+        values = np.where(share < 0, NODATA, (share > threshold).astype(np.uint8)).astype(np.uint8)
         if np.any(values != NODATA):
             out[(x, y)] = values
     return out
 
 
-def compare_q3_with_source(source: Path, levels: dict[int, dict], zooms: tuple[int, ...], nodata: int) -> dict:
-    """A q3 of q3 values against a q3 taken from the source pixels, tile by tile."""
+def compare_q3_with_source(
+    source: Path, levels: dict[int, dict], zooms: tuple[int, ...], nodata: int, threshold: float = 0.25
+) -> dict:
+    """A q3 (or q2) of child values against the same quantile taken from the source pixels."""
     rows = {}
     for zoom in zooms:
         pyramid = levels.get(zoom, {})
-        direct = q3_from_source(source, zoom, sorted(pyramid), nodata)
+        direct = q3_from_source(source, zoom, sorted(pyramid), nodata, threshold)
         keys = set(pyramid) | set(direct)
         empty = np.full((TILE_SIZE, TILE_SIZE), NODATA, dtype=np.uint8)
         differ = 0
@@ -538,11 +545,11 @@ PREVIEW_HTML = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Cropland PMTiles sample: max, q3, nearest</title>
+  <title>Cropland PMTiles sample: max, q3, q2, nearest</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"/>
   <style>
     html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
-    #grid { display: grid; grid-template-columns: repeat(3, 1fr); height: 100%; gap: 2px; }
+    #grid { display: grid; grid-template-columns: repeat(4, 1fr); height: 100%; gap: 2px; }
     .pane { position: relative; }
     .pane .map { position: absolute; inset: 0; }
     .label { position: absolute; z-index: 1; left: 8px; top: 8px; background: #fff; padding: 4px 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
@@ -555,7 +562,7 @@ PREVIEW_HTML = """<!doctype html>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
   <script>
-    const names = ["max", "q3", "nearest"];
+    const names = ["max", "q3", "q2", "nearest"];
     const center = __CENTER__;
     const protocol = new pmtiles.Protocol();
     // The archive holds class values. This protocol reads a tile by byte range, then colours it.
@@ -840,9 +847,10 @@ def command_build_pmtiles(
     levels = stats.pop("_levels")
     source_path = stats.pop("_source")
     contract = stats.pop("_contract")
-    if contract["resampling"] == "q3":
-        stats["q3_against_source"] = compare_q3_with_source(
-            source_path, levels, (8, 6, 4), contract["nodata"]
+    thresholds = {"q3": 0.25, "q2": 0.5}
+    if contract["resampling"] in thresholds:
+        stats["q3_against_source" if contract["resampling"] == "q3" else "q2_against_source"] = compare_q3_with_source(
+            source_path, levels, (8, 6, 4), contract["nodata"], thresholds[contract["resampling"]]
         )
     stats["bounds_note"] = "west, south, east, north in degrees"
     stats["wall_seconds"] = round(time.perf_counter() - started, 2)
