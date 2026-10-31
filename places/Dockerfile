@@ -10,4 +10,4 @@ RUN apt-get update \
  && make -C /tmp/tippecanoe install \
  && rm -rf /tmp/tippecanoe /var/lib/apt/lists/*
 COPY places/requirements.txt /tmp/requirements.txt
-RUN python3 -m pip install --break-system-packages -r /tmp/requirements.txt pmtiles
+RUN python3 -m pip install --break-system-packages -r /tmp/requirements.txt

@@ -238,15 +238,14 @@ def test_replace_copies_the_old_object_first_and_sets_no_cache(monkeypatch, tmp_
     calls = []
     existing = {"gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles"}
     monkeypatch.setattr(places, "object_exists", lambda path: path in existing)
-    monkeypatch.setattr(places, "gcloud", lambda args: calls.append(("gcloud", args)))
+    monkeypatch.setattr(places, "copy_object", lambda src, dst: calls.append(("copy", src, dst)))
     monkeypatch.setattr(
-        places, "upload_with_gcloud", lambda local, dest, cache_control=None: calls.append(("upload", dest, cache_control))
+        places, "upload_object", lambda local, dest, cache_control=None: calls.append(("upload", dest, cache_control))
     )
     monkeypatch.setattr(places, "check_range", lambda url: 206)
     published = "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles"
     places.replace_published(tmp_path / "x.pmtiles", published)
-    assert calls[0][1][:2] == ["storage", "cp"]
-    assert calls[0][1][3].endswith("/v1/places.previous.pmtiles")
+    assert calls[0] == ("copy", published, published.replace("places.pmtiles", "places.previous.pmtiles"))
     assert calls[1] == ("upload", published, "no-cache")
 
 
@@ -258,7 +257,7 @@ def test_the_rollback_copy_is_never_overwritten(monkeypatch, tmp_path):
 
 def test_a_range_that_is_not_206_stops_the_run(monkeypatch, tmp_path):
     monkeypatch.setattr(places, "object_exists", lambda path: False)
-    monkeypatch.setattr(places, "upload_with_gcloud", lambda *a, **k: None)
+    monkeypatch.setattr(places, "upload_object", lambda *a, **k: None)
     monkeypatch.setattr(places, "check_range", lambda url: 200)
     with pytest.raises(SystemExit, match="expected 206"):
         places.replace_published(tmp_path / "x.pmtiles", "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles")

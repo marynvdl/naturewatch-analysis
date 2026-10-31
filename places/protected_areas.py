@@ -791,13 +791,36 @@ def upload_with_gcloud(local: Path, destination: str, cache_control: str | None 
     gcloud(["storage", "cp", *extra, str(local), destination])
 
 
+def split_gs(path: str) -> tuple[str, str]:
+    bucket, _, name = path.removeprefix("gs://").partition("/")
+    return bucket, name
+
+
+def storage_client():
+    """Google Cloud Storage client. On Batch it uses the machine's service account."""
+    from google.cloud import storage
+
+    return storage.Client(project=PROJECT)
+
+
 def object_exists(path: str) -> bool:
-    listed = subprocess.run(
-        ["gcloud", "storage", "ls", path, f"--project={PROJECT}"],
-        text=True,
-        capture_output=True,
-    )
-    return listed.returncode == 0 and listed.stdout.strip() != ""
+    bucket, name = split_gs(path)
+    return storage_client().bucket(bucket).blob(name).exists()
+
+
+def copy_object(source: str, destination: str) -> None:
+    client = storage_client()
+    src_bucket, src_name = split_gs(source)
+    dst_bucket, dst_name = split_gs(destination)
+    bucket = client.bucket(src_bucket)
+    bucket.copy_blob(bucket.blob(src_name), client.bucket(dst_bucket), dst_name)
+
+
+def upload_object(local: Path, destination: str, cache_control: str | None = None) -> None:
+    bucket, name = split_gs(destination)
+    blob = storage_client().bucket(bucket).blob(name)
+    blob.cache_control = cache_control
+    blob.upload_from_filename(str(local), content_type="application/octet-stream")
 
 
 def previous_path(published: str) -> str:
@@ -821,9 +844,9 @@ def replace_published(dest: Path, published: str) -> None:
             raise SystemExit(
                 f"{backup} already exists and is the rollback copy. Remove it only on request, then run again."
             )
-        gcloud(["storage", "cp", published, backup])
+        copy_object(published, backup)
         print(f"copied {published} to {backup}", flush=True)
-    upload_with_gcloud(dest, published, cache_control="no-cache")
+    upload_object(dest, published, cache_control="no-cache")
     print(f"uploaded {published}", flush=True)
     status = check_range(https_url(published))
     print(f"range_status {status}", flush=True)
