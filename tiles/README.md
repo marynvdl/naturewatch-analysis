@@ -58,7 +58,7 @@ Compute for 937 seconds at the spot price of about $0.04 an hour is under $0.02.
 
 ## Version 2: one raster PMTiles archive (sample, task 04)
 
-Status: local sample built and compared. Waiting for approval of one resampling. The global archive does not exist and nothing was uploaded.
+Status: task 04 complete. **`q3`** is approved and set on `cookbook/recipes/cropland-2024-v2.yaml` (2 November 2026). Local samples only; the global archive does not exist and nothing was uploaded. Task 05 may start after explicit approval of its Batch estimate.
 
 A recipe with `tiles.scheme: pmtiles` writes one archive of class-value PNG tiles, zooms 0–12, with the `pmtiles` package `Writer` in tile id order. The GDAL PMTiles driver is not used. A recipe with `scheme: xyz` still writes the version 1 folder. The Batch `submit` and `run` commands refuse a pmtiles recipe until task 05 wires them.
 
@@ -71,7 +71,7 @@ python tiles/cropland.py build --recipe cookbook/recipes/cropland-2024-v2.yaml \
 python tiles/cropland.py preview --dest <folder with max, q3 and nearest .pmtiles>
 ```
 
-The recipe's `tiles.resampling` stays unset until a choice is approved. `--resampling` names one for a local sample and is refused if the recipe sets a different one. Allowed values: `max`, `q3`, `q2`, `nearest`, and `fraction` with a `tiles.threshold` (or `--threshold`) above 0 and below 1. `q2` was added after the first sample, at the request of the reviewer; the task text lists three.
+The recipe sets **`tiles.resampling: q3`**. `--resampling` still names one for a local comparison sample and is refused if it differs from the recipe. Allowed values: `max`, `q3`, `q2`, `nearest`, and `fraction` with a `tiles.threshold` (or `--threshold`) above 0 and below 1. `q2` was added after the first sample, at the request of the reviewer; the task text lists three.
 
 ### How the pyramid is built
 
@@ -166,6 +166,59 @@ Reading it.
 
 The wall times and peak memory in the table above were taken before this section and without the comparison pass. Runs of `max`, `q3`, `q2` and `nearest` now also build a share pyramid for the comparison, so their latest peak memory (208–239 MB) is higher than in that table. The `fraction` runs peaked at 203–213 MB with a wall time of 0.83–0.85 s.
 
+### Share archive and hybrid display (`share`, `hybrid-10`, `hybrid-11`)
+
+One more sample encoding, plus preview panes that compare it to the binary choices.
+
+**Build.** `--resampling share` writes the cropland **share** in each cell (gray 0–255 = round(share × 255), alpha 0 = nodata). Metadata `encoding: cropland-share`. Same average-up pyramid as `fraction`, without thresholding. On the Swartland window: 98 tiles, **318,665 bytes**, 0.82 s, peak 204 MB. The file is larger than `max` because PNGs hold many distinct gray values, not only 0 and 1.
+
+**Preview.** After `share.pmtiles` exists, the preview adds virtual panes `hybrid-10` and `hybrid-11`. They read the same archive; paint is applied in the page:
+
+| Pane | Paint |
+| --- | --- |
+| `share` | Orange opacity = share everywhere (fully graded). |
+| `hybrid-10` | Map zoom **&lt; 10**: opacity = share. Map zoom **≥ 10**: binary (orange if share &gt; 0.5, faint green if 0 &lt; share ≤ 0.5). |
+| `hybrid-11` | Same with cutoff **11**. |
+
+Zoom the maps together and watch a hybrid pane switch from soft fields to crisp boundaries. Example:
+
+`http://127.0.0.1:8766/preview.html?show=max,fraction-0.5,share,hybrid-10`
+
+**Stats in `share.json`.** `hybrid_fidelity` scores each **tile zoom** as if display used graded below `--hybrid-binary-zoom` (default 10) and binary above (threshold 0.5). That is slightly different from the preview, which keys off **map zoom** so you can see the switch while panning. On this window with `hybrid_binary_zoom: 10`:
+
+| Tile zoom | Hybrid (graded below 10, binary at 10+) shown/true · recall · precision | Binary `fraction` &gt; 0.5 at same zoom |
+| --- | --- | --- |
+| 12 | 1.00 · 98% · 98% | 1.00 · 98% · 98% |
+| 8 | 1.00 · 100% · 100% | 1.04 · 90% · 86% |
+| 6 | 1.00 · 100% · 100% | 1.04 · 82% · 79% |
+| 4 | 1.00 · 100% · 100% | 0.96 · 71% · 73% |
+
+Below zoom 10, hybrid keeps the full cropland signal with honest opacity (recall 100%, shown area equals true area). At zoom 12 it matches a 0.5 binary cut. Task 07 would implement the same rules in Mapbox paint (`raster-opacity` from band values below `{zoom}` N, threshold above).
+
+This is a **sample only**. The global recipe still has `encoding: class-value`. Approving hybrid for production means a new encoding in the cookbook and app styling, not only `tiles.resampling`.
+
+### Limpopo / Mpumalanga evaluation (option 2)
+
+Built on 2 November 2026 for resampling approval (**`q3`** chosen). Window west 27.0, south −25.5, east 32.5, north −22.0 (EPSG:4326). Sprout tiles `20S_020E`, `20S_030E`, `30S_020E`, `30S_030E` under `data/tiles/limpopo/src/`. Outputs in `data/tiles/limpopo/out/`. Not uploaded. No cloud compute; sprout read from the bucket to this machine (~35 MB).
+
+| Archive | Tiles | Bytes | Wall | Peak memory | Streaming |
+| --- | --- | --- | --- | --- | --- |
+| `q3.pmtiles` | 3,858 | 3,906,097 | 34 s | 448,561,152 | yes |
+| `fraction-0.5.pmtiles` | 3,858 | 3,755,972 | 36 s | 447,873,024 | yes |
+| `max.pmtiles` | 3,858 | 3,940,680 | 35 s | 433,979,392 | yes |
+| `nearest.pmtiles` | 3,858 | 3,882,986 | 34 s | 434,388,992 | yes |
+| `fraction-0.35.pmtiles` | 3,858 | 3,875,211 | 39 s | 433,291,264 | yes |
+
+Zoom 12 tiles in the window: about 2,835. Builds use the disk cache when zoom 12 count exceeds 120 tiles.
+
+**Preview**
+
+```bash
+python tiles/cropland.py preview --dest data/tiles/limpopo/out --port 8767
+```
+
+Open `http://127.0.0.1:8767/preview.html?show=q3,fraction-0.35,max,nearest` for the four-way comparison (`fraction-0.35` between `max` and `q3`). Default `preview.html` lists all five archives in the folder.
+
 ### Does Mapbox GL JS read it?
 
 Yes, from `mapbox-gl` 3.23.0, as a raster source whose `url` ends in `.pmtiles`. Checked on 31 October 2026 with a public token from `MAPBOX_ACCESS_TOKEN`, in a browser, on `max.pmtiles` served with Range requests, using a blank style and `{type: "raster", url: ".../max.pmtiles"}`. The window drew and no error was raised in 3.23.0, 3.24.0, 3.26.0, 3.28.0, 3.30.0, 3.32.0 and 3.34.1.
@@ -213,4 +266,4 @@ Open `http://127.0.0.1:8766/preview.html`. Four maps move together: `max`, `q3`,
 
 ### Approval
 
-Not yet given. When one resampling is approved, set `tiles.resampling` on `cookbook/recipes/cropland-2024-v2.yaml` and record the choice here. Task 05 does not start before then.
+**`q3`**, approved 2 November 2026. Compared on the Swartland window (`max`, `q3`, `q2`, `nearest`, and optional `fraction` thresholds) and on a Limpopo / Mpumalanga window (`q3`, `max`, `nearest`, `fraction-0.35`, `fraction-0.5`). **`max`** kept too much cropland at coarse zoom; **`nearest`** dropped too much; **`fraction`** at 0.5 was closer to true area but lost small patches. **`q3`** balanced recall and overdraw for map use. Recorded on the recipe as `tiles.resampling: q3`. Task 05 still needs its own cost approval before any global Batch run.

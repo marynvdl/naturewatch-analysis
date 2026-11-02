@@ -4,6 +4,10 @@ Parcel: [Cropland 2024 global](https://github.com/marynvdl/naturewatch-app/blob/
 
 Repository: naturewatch-analysis. Start only after task 03 has written the sprout.
 
+## Status
+
+Completed 2 November 2026. Approved resampling: **`q3`** on `cookbook/recipes/cropland-2024-v2.yaml`. Pull request: https://github.com/marynvdl/naturewatch-analysis/pull/18 (merge when ready). Task 05 is next in a separate chat.
+
 ## Goal
 
 Build the tiles step as one raster PMTiles archive. Prove it on a small window under three resamplings, `max`, `q3`, and nearest neighbour, and stop for approval. Do not build the global archive.

@@ -171,17 +171,19 @@ def tile(fill, spots=()):
     return out
 
 
-def test_the_v2_recipe_leaves_resampling_unset_until_a_sample_is_approved():
-    assert "resampling" not in V2["tiles"]
+def test_the_v2_recipe_sets_q3_after_task_04_approval():
+    assert V2["tiles"]["resampling"] == "q3"
+    assert cropland.tile_contract(V2)["resampling"] == "q3"
     try:
-        cropland.tile_contract(V2)
+        cropland.tile_contract(V2, "max")
     except ValueError as error:
-        assert "unset" in str(error)
+        assert "q3" in str(error) and "max" in str(error)
     else:
-        raise AssertionError("an unset resampling must stop the build")
-    assert cropland.tile_contract(V2, "q3")["resampling"] == "q3"
+        raise AssertionError("a sample resampling that differs from the recipe must stop the build")
     for name in ("max", "q3", "q2", "nearest"):
-        assert cropland.tile_contract(V2, name)["scheme"] == "pmtiles"
+        recipe = json.loads(json.dumps(V2))
+        recipe["tiles"].pop("resampling", None)
+        assert cropland.tile_contract(recipe, name)["resampling"] == name
     try:
         cropland.tile_contract(V2, "bilinear")
     except ValueError as error:
@@ -258,6 +260,8 @@ def test_an_all_nodata_parent_is_left_out():
 def pmtiles_recipe(max_zoom):
     recipe = json.loads(json.dumps(V2))
     recipe["tiles"]["max_zoom"] = max_zoom
+    recipe["tiles"].pop("resampling", None)
+    recipe["tiles"].pop("threshold", None)
     return recipe
 
 
@@ -330,16 +334,18 @@ def test_a_byte_range_is_inclusive_and_open_ended_ranges_work():
 
 
 def test_fraction_needs_a_threshold_between_zero_and_one():
+    sample = json.loads(json.dumps(V2))
+    sample["tiles"].pop("resampling", None)
     for bad in (None, 0, 1, 1.5):
         try:
-            cropland.tile_contract(V2, "fraction", bad)
+            cropland.tile_contract(sample, "fraction", bad)
         except ValueError as error:
             assert "threshold" in str(error)
         else:
             raise AssertionError(f"threshold {bad} should be refused")
-    assert cropland.tile_contract(V2, "fraction", 0.35)["threshold"] == 0.35
+    assert cropland.tile_contract(sample, "fraction", 0.35)["threshold"] == 0.35
     try:
-        cropland.tile_contract(V2, "max", 0.35)
+        cropland.tile_contract(sample, "max", 0.35)
     except ValueError as error:
         assert "threshold" in str(error)
     else:
@@ -388,12 +394,40 @@ def test_a_fraction_pyramid_equals_the_share_taken_from_the_source(tmp_path):
             assert (direct[key][both] != classes[key][both]).mean() < 0.02
 
 
-def test_fidelity_is_perfect_when_the_levels_are_the_thresholded_shares(tmp_path):
+def test_share_resampling_stores_fraction_in_png(tmp_path):
+    from pmtiles.reader import Reader, MmapSource
+    from pmtiles.tile import TileType
+
     source = tmp_path / "sprout.tif"
     write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
-    contract = cropland.tile_contract(pmtiles_recipe(4), "fraction", 0.5)
+    dest = tmp_path / "share.pmtiles"
+    stats = cropland.build_pmtiles(source, dest, pmtiles_recipe(4), "share")
+    assert stats["tile_encoding"] == "cropland-share"
+    with open(dest, "rb") as handle:
+        reader = Reader(MmapSource(handle))
+        assert reader.metadata()["encoding"] == "cropland-share"
+        assert reader.header()["tile_type"] == TileType.PNG
+        png = reader.get(0, 0, 0)
+    path = tmp_path / "z0.png"
+    path.write_bytes(png)
+    gray, alpha = read_png(path)
+    assert int(alpha.max()) == 255
+    assert int(gray[alpha == 255].max()) <= 255
+
+
+def test_hybrid_fidelity_matches_graded_and_binary_extremes(tmp_path):
+    source = tmp_path / "sprout.tif"
+    write_raster(source, field_with_a_nodata_edge(), pixel=0.2, origin=(16.0, -22.0))
+    contract = cropland.tile_contract(pmtiles_recipe(5), "share")
     fractions = cropland.build_fraction_pyramid(source, cropland.raster_bounds(source), contract)
-    levels = cropland.threshold_levels(fractions, 0.5)
-    rows = cropland.fidelity(levels, fractions, (4, 3))
-    assert rows[4]["true_km2"] > 0
-    assert 0 <= rows[4]["recall"] <= 1 and 0 <= rows[4]["precision"] <= 1
+    low = cropland.hybrid_fidelity(fractions, binary_from_zoom=99, zooms=(4,))
+    high = cropland.hybrid_fidelity(fractions, binary_from_zoom=0, threshold=0.5, zooms=(4,))
+    assert low["4"]["shown_over_true"] == 1.0
+    assert low["4"]["recall"] == 1.0
+    assert high["4"]["recall"] <= low["4"]["recall"]
+
+
+def test_preview_pane_config_for_hybrid_reads_share_archive(tmp_path):
+    (tmp_path / "share.pmtiles").write_bytes(b"x")
+    cfg = cropland.preview_pane_config("hybrid-10", tmp_path)
+    assert cfg["file"] == "share.pmtiles" and cfg["mode"] == "hybrid" and cfg["hybrid_n"] == 10
