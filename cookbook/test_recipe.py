@@ -137,4 +137,4 @@ def test_the_global_recipe_names_version_2_and_every_source_tile():
     assert recipe["tiles"]["max_zoom"] == 12
     assert recipe["tiles"]["scheme"] == "pmtiles"
     assert recipe["tiles"]["encoding"] == "class-value"
-    assert "resampling" not in recipe["tiles"]
+    assert recipe["tiles"]["resampling"] == "q3"

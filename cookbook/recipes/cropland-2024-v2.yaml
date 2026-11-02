@@ -272,4 +272,5 @@ tiles:
   max_zoom: 12
   scheme: pmtiles
   encoding: class-value
-  # Resampling is unset. The South Africa recipe used max. q3 is still open.
+  # Approved in task 04 on 2 November 2026 after Swartland and Limpopo samples.
+  resampling: q3
