@@ -56,7 +56,7 @@ Branch from `main`. Do this task only. Explain billable processing and get appro
 
 ## Notes from the work
 
-- Stopped before the Batch job. The design, estimate and commands are in the last section of `tiles/README.md`. Approval is needed for the one-shard pilot, the 302-shard job and the merge job.
+- The run is done and recorded in `tiles/README.md`. The estimate was approved and the pilot, the 302-shard job and the merge job ran on 2 November 2026.
 - The app blueprint in naturewatch-app (and the parcel) still names `.../v2/cropland-2024.tif` for the sprout. The sprout is the VRT `.../v2/cropland-2024.vrt`. Task 07, or a docs change there, must correct it.
 - This task says to cap parallelism "as the sprout job did with 20". `sprout/README.md` records 8 for the per-tile job. The estimate uses 8. The vCPU quota was not checked.
 - "Set `Cache-Control` as the v1 tiles do": the v1 objects carry no explicit value; they serve the bucket default `public, max-age=3600`. The merge task sets that value on the archive.

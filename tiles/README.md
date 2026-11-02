@@ -270,7 +270,7 @@ Open `http://127.0.0.1:8766/preview.html`. Four maps move together: `max`, `q3`,
 
 ## Global run: sharded PMTiles (task 05)
 
-Status: code and local checks done, and one pilot shard has run on Batch. **The 302-shard job and the merge have not been submitted.** It waits for approval of the estimate below. Nothing was uploaded and no virtual machine ran.
+Status: **done.** The archive is published at `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles` (run record below). Written by Batch jobs `tiles-cropland-2024-v2-shards` and `tiles-cropland-2024-v2-merge`. It waits for approval of the estimate below. Nothing was uploaded and no virtual machine ran.
 
 Code: `tiles/pyramid.py` (planning, one shard, merge; knows nothing about cropland), `tiles/global_cropland.py` (binds a recipe, storage and Batch to it), tests in `tiles/test_global.py`. Another year is a new recipe. Another layer type is a new `render`, `reduce`, `encode` and `decode` in place of `layer()`.
 
@@ -330,7 +330,7 @@ Shard `5-23-14` (India, four source tiles, every zoom 12 tile present, the full 
 
 The shard stays in scratch. A full run skips it, since its settings hash matches. This is a worst case shard for time: most shards are partly sea or outside the data. Time per task comes out inside the 25–44 tiles a second range in the estimate. Bytes per tile (1.31 KB) are above the sample's 1.1 KB; this shard is dense, so the 1.5–6 GB range stands as the range, with the top of it more likely than the bottom.
 
-### Estimate for approval (not run)
+### Estimate for approval (approved 2 November 2026, now run)
 
 | | |
 | --- | --- |
@@ -346,4 +346,26 @@ The shard stays in scratch. A full run skips it, since its settings hash matches
 
 The pilot measured 31 tiles a second on the real machine (44 on the laptop). If the pilot shard runs slower, the wall time scales with it.
 
-After approval, the run is: pilot shard, check its record and logs, the 302-task job, then the merge job. Status and cancel commands are printed by `submit`. No virtual machine is left running by design: Batch deletes each machine when its task ends. The run record (job ids, archive bytes, tile count, wall time, peak memory, and that no machine was left running) is added here after the run.
+### Run record (2 November 2026)
+
+| | |
+| --- | --- |
+| Archive | `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles` |
+| Archive bytes | **2,814,675,979** (2.62 GiB), inside the 1.5–6 GB estimate |
+| Zoom range | 0–12 |
+| Tiles | **5,084,649** (5,084,508 from shards, 141 at zooms 0–4), 1,357,087 distinct tile bodies |
+| Resampling | `q3` |
+| Shard job | `tiles-cropland-2024-v2-shards`, 302 tasks, 8 at a time, spot `e2-standard-2`, 09:57–12:57 UTC, **10,764 s (about 3 h)**, 302 succeeded. Sum of shard wall times 80,631 s (22.4 task hours), slowest shard 949 s, peak memory per shard at most 197,812,224 bytes. 3,808,915 zoom 12 tiles. Shard files 2,815,914,581 bytes in total |
+| Merge job | `tiles-cropland-2024-v2-merge`, one spot `e2-standard-4`, job run duration 468 s, merge wall 463 s (fetch 82 s, build 96 s), **peak memory 1,407,229,952 bytes** |
+| Checks | Tile ids strictly increasing across all zooms, every tile at zoom 5 and above from exactly one shard, per-zoom counts equal each shard's record. 12 zoom 8 subtrees (3,393 tiles) rebuilt from the sprout VRT matched the archive byte for byte |
+| Range request | 206, `Content-Range: bytes 0-126/2814675979`, `Accept-Ranges: bytes` |
+| Cache-Control | `public, max-age=3600` |
+| Wall time end to end | about 3 h 10 min (pilot excluded) |
+| Cost | about 24 VM hours of `e2-standard-2` and 8 minutes of `e2-standard-4`, about $1 (the estimate was $2–3). Storage of the archive about $0.06 a month. No egress |
+| Pilot | `tiles-cropland-2024-v2-shards-pilot228`, shard `5-23-14`, 532 s |
+| Scratch | `gs://nature-watch-bucket/scratch/tiles/cropland-2024-v2/` deleted, shards by the merge task, `code/` afterwards by hand |
+| Virtual machines left running | none |
+
+Faster than estimated: the real mean was 267 s a shard (the estimate assumed 5–11 minutes) because many shards are partly sea or outside the data. Bytes per tile were 0.55 KB on average.
+
+Not done here: the app still reads the version 1 PNG template. Task 07 in naturewatch-app changes that, and needs `mapbox-gl` 3.23.0 or later.
