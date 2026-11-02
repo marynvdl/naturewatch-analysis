@@ -1,0 +1,16 @@
+---
+description: Operational boundaries for processing long-running Earth Engine data tasks
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Long-Running Task Rules
+
+## Task Monitoring Policy
+- **Non-Blocking Strategy:** Long Earth Engine jobs or Batch submissions must run independently of the chat session.
+- **Submission Protocol:** Immediately after submitting an authorized cloud task, capture and record:
+  1. The exact Earth Engine or GCP Task ID.
+  2. The target Cloud Storage output destination path.
+  3. The status-check command or URL method.
+  4. The task cancellation method.
+- Report these identifiers directly to the user and return control of the chat window immediately. Do not repeatedly poll, sleep, or wait for long remote tasks to complete in the chat loop.

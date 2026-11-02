@@ -1,0 +1,44 @@
+---
+description: Global pipeline standards, coordinate accuracy, security, and strict cloud cost controls
+globs: "*"
+alwaysApply: true
+---
+
+# Sooty Earth — Core Pipeline Rules
+
+## 1. Project Context & Strategy
+- You are writing data processing pipelines for `naturewatch-analysis`, responsible for generating source map layers, computing spatial statistics, and writing to Google Cloud Storage (GCS) and Supabase.
+- **Tech Stack Constraints:** Python, GDAL/OGR, Cloud-Optimized GeoTIFF (COG), STAC metadata, Google Cloud Storage, and Google Cloud Batch.
+- Always prioritize lightweight, non-orchestrated scripts and pure SQL/PostGIS computation over heavy pipeline frameworks unless requested.
+
+## 2. Context Isolation & Cost Control
+- Active pipeline definitions live in `docs/pipelines.md`. Active tasks live in `.cursor/tasks/`.
+- **STRICT COST GUARDRAIL:** Keeping compute, storage, and egress costs minimal is critical. 
+  - Never run heavy analytical processing locally on this laptop; structure scripts to test with tightly cropped sample areas first [source: 0.1.2].
+  - Optimize memory usage, minimize database write operations, and partition jobs when preparing to scale to 10,000+ polygons.
+  - Inspect workflow triggers before pushing to ensure a commit does not launch automatic, billable remote cloud jobs.
+  - Obtain explicit user authorization before triggering any billable remote processing or provisioning cloud infrastructure [source: 0.1.4, 2, 4].
+
+## 3. Strict Security & Secret Hygiene
+- **ZERO TOLERANCE FOR SECRETS:** Never commit or expose service-account JSON keys, private keys, bucket access tokens, or database passwords.
+- Reference credentials exclusively via environment variables or secure environment parameters.
+- Freeze execution immediately if a raw token or key configuration is exposed.
+
+## 4. Engineering & Spatial Accuracy
+- Maintain absolute accuracy for numerical geospatial calculations (square kilometers, percentages, and valid coverage values) [source: 0.1.2, 1, 2].
+- Use proper coordinate reference systems (e.g., source pixels vs display tiles) and spheroid weight formulas as mandated in project blueprints.
+- Record pipeline run metrics (bytes stored, wall time, peak memory) in the step's respective README files upon completion.
+
+## 5. Automated Git & Lifecycle
+- Once a script or transformation task passes local verification passes, execute a single concatenated shell command using the GitHub CLI (`gh`):
+  ```bash
+  git add . && git commit -m "feat: succinct description" && git push origin <branch-name> && gh pr create --fill && gh pr merge --auto --squash --delete-branch
+  ```
+- Trigger an audible terminal alert (`printf '\a'`) once the sequence runs.
+
+## 6. Output & Clean Communication
+- Keep responses concise and structured. Focus entirely on execution.
+- **STRICT ATTRIBUTION BAN:** Do not add AI or tool-based signatures (`Co-authored-by: Cursor`) to any outputs or code configurations.
+---
+alwaysApply: true
+---

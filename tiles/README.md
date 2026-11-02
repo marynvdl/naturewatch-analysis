@@ -60,7 +60,7 @@ Compute for 937 seconds at the spot price of about $0.04 an hour is under $0.02.
 
 Status: task 04 complete. **`q3`** is approved and set on `cookbook/recipes/cropland-2024-v2.yaml` (2 November 2026). Local samples only; the global archive does not exist and nothing was uploaded. Task 05 may start after explicit approval of its Batch estimate.
 
-A recipe with `tiles.scheme: pmtiles` writes one archive of class-value PNG tiles, zooms 0–12, with the `pmtiles` package `Writer` in tile id order. The GDAL PMTiles driver is not used. A recipe with `scheme: xyz` still writes the version 1 folder. The Batch `submit` and `run` commands refuse a pmtiles recipe until task 05 wires them.
+A recipe with `tiles.scheme: pmtiles` writes one archive of class-value PNG tiles, zooms 0–12, with the `pmtiles` package `Writer` in tile id order. The GDAL PMTiles driver is not used. A recipe with `scheme: xyz` still writes the version 1 folder. The version 1 `submit` and `run` commands refuse a pmtiles recipe. The global run is `tiles/global_cropland.py`, described in the last section.
 
 ```bash
 pip install -r cookbook/requirements.txt -r tiles/requirements.txt
@@ -267,3 +267,105 @@ Open `http://127.0.0.1:8766/preview.html`. Four maps move together: `max`, `q3`,
 ### Approval
 
 **`q3`**, approved 2 November 2026. Compared on the Swartland window (`max`, `q3`, `q2`, `nearest`, and optional `fraction` thresholds) and on a Limpopo / Mpumalanga window (`q3`, `max`, `nearest`, `fraction-0.35`, `fraction-0.5`). **`max`** kept too much cropland at coarse zoom; **`nearest`** dropped too much; **`fraction`** at 0.5 was closer to true area but lost small patches. **`q3`** balanced recall and overdraw for map use. Recorded on the recipe as `tiles.resampling: q3`. Task 05 still needs its own cost approval before any global Batch run.
+
+## Global run: sharded PMTiles (task 05)
+
+Status: **done.** The archive is published at `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles` (run record below). Written by Batch jobs `tiles-cropland-2024-v2-shards` and `tiles-cropland-2024-v2-merge`. It waits for approval of the estimate below. Nothing was uploaded and no virtual machine ran.
+
+Code: `tiles/pyramid.py` (planning, one shard, merge; knows nothing about cropland), `tiles/global_cropland.py` (binds a recipe, storage and Batch to it), tests in `tiles/test_global.py`. Another year is a new recipe. Another layer type is a new `render`, `reduce`, `encode` and `decode` in place of `layer()`.
+
+### Design
+
+- **Refuses** to start when `tiles.resampling` is unset, or is not a class-value method (`max`, `q3`, `q2`, `nearest`). The recipe says `q3`.
+- **Shards.** One per zoom 5 tile that touches a source tile. For the 223 tiles that is **302 shards** (`plan` prints it), at most 4 source tiles each and at most 16,384 zoom 12 tiles. Shard names are `5-<x>-<y>`.
+- **One shard task.** Copies its source COGs from `sprout.tiles_path` to local disk, builds a VRT over them, then walks its subtree depth first: zoom 12 is warped from the source, every lower zoom down to 5 is reduced from its four children with `q3`. Memory holds one path of arrays and the PNG bytes of the shard, not a zoom level. The zoom 12 warp is the same `render_tile` the sample used.
+- **Shard output.** A PMTiles file `5-<x>-<y>.pmtiles` and then a record `5-<x>-<y>.json`, in `gs://nature-watch-bucket/scratch/tiles/cropland-2024-v2/shards/`. The record is written last, so a record means a finished shard. It holds the tile counts per zoom, bytes, wall time, peak memory and a hash of the settings (recipe id, resampling, max zoom, shard zoom, sprout path, code version).
+- **Resume.** A task skips a shard whose record has the current settings hash and whose file size matches the record. A changed resampling, a truncated file or a missing record is rebuilt. Batch retries a task 3 times and retries a spot preemption (exit 50001) separately.
+- **Merge.** One task. Refuses to run when any shard is missing or not current, and names them. It reads the zoom 5 root tile of every shard, builds zooms 0–4 from them with the same `q3`, then writes the archive with `Writer`.
+- **Order and uniqueness.** PMTiles tile ids order zoom first, then along a Hilbert curve. So the archive is zooms 0–4 from the merge, then zoom 5 across all shards, then zoom 6 across all shards, and so on. Within one zoom, the tiles under one zoom 5 tile have consecutive ids and shards are walked in zoom 5 id order, so no sort is needed. The merge does not assume this. It stops if a tile id is not strictly after the one before, if a tile at zoom 5 or above comes from a shard that is not its ancestor (so it has exactly one shard), or if a shard gives different counts per zoom than its record. Tests cover shards in the wrong order, a tile written twice, and a tile in the wrong shard. The sharded archive is byte-identical, tile by tile, to a single-process `build_pmtiles` of the same sources (test `test_sharded_archive_equals_a_single_process_build`).
+- **Dedup.** The `pmtiles` `Writer` stores one body for identical tiles (sea, desert), keyed by Python's 64-bit `hash` of the bytes with no equality check. A collision among about a million distinct tiles has a chance near 3 in 100 million. Accepted.
+- **Check against the sprout.** After the archive is built, the merge task rebuilds 12 random zoom 8 subtrees (341 tiles each, 256 of them warped) straight from the sprout VRT and compares every tile, present or absent, byte for byte with the archive. Any difference stops the task before upload.
+- **Upload.** Archive to `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, refused if it already exists. Then `Cache-Control: public, max-age=3600` is set, which is what the version 1 PNG objects serve (they have no explicit setting; the bucket default for public objects gives that). Then a Range request on the public URL must answer **206**, `Content-Range`, and start with `PMTiles`. The task fails if not.
+- **Scratch.** The merge task deletes `shards/` after a successful upload. `code/` (the scripts, recipe and `pmtiles` wheel, about 100 KB) stays under the scratch prefix until someone removes it.
+- **Pilot.** `submit --pilot N` runs shard N alone. The Batch container, its Python and the bootstrap (numpy from `apt`, `pmtiles` from a wheel copied to scratch) are **not yet tested on the real image** because Docker is not running here. A one-shard pilot costs a few cents and proves the image before the 302-task job.
+
+### Commands
+
+```bash
+python tiles/global_cropland.py plan --recipe cookbook/recipes/cropland-2024-v2.yaml
+python tiles/global_cropland.py submit --pilot 0              # writes the job file, prints status and cancel commands, submits nothing
+python tiles/global_cropland.py submit --pilot 0 --approved   # after approval: one shard task
+python tiles/global_cropland.py submit --approved             # after approval: 302 shard tasks, 8 at a time
+python tiles/global_cropland.py submit --merge --approved     # after the shard job succeeded
+python tiles/global_cropland.py local --sources <folder of sprout COGs> --work <dir> --top-zoom 10   # no cloud
+```
+
+`submit` without `--approved` only writes `data/tiles/cropland-2024-v2/global/<job>.json` and prints it. Job names are `tiles-cropland-2024-v2-shards`, `tiles-cropland-2024-v2-shards-pilot<N>` and `tiles-cropland-2024-v2-merge`.
+
+### Local checks (no cloud)
+
+Limpopo window, four sprout tiles read from disk (9 shards). Laptop, not an `e2-standard-2`.
+
+| Run | Zoom 12 tiles | Wall | Peak memory |
+| --- | --- | --- | --- |
+| Shard `5-17-17` at zoom 12 | 696 (943 tiles with lower zooms) | 15.8 s | 127 MB |
+| Four tiles, 9 shards, merge, top zoom 10 | 5,256 tiles, 4,821,675 bytes | 90 s | 175 MB |
+
+The shard run is **about 44 zoom 12 tiles a second** including the lower zooms. The merge of nine shards took 0.1 s; the archive was 12 KB smaller than the shards added, so the loss from not sharing tile bodies across shards is small. `python -m pytest tiles cookbook` passes.
+
+### Pilot shard (run)
+
+Batch job `tiles-cropland-2024-v2-shards-pilot228`, submitted 2 November 2026 09:37 UTC, one spot `e2-standard-2` in `europe-west1`, 30 GB disk. State SUCCEEDED. The bootstrap on the real image worked (numpy was present, `pmtiles` loaded from the wheel).
+
+Shard `5-23-14` (India, four source tiles, every zoom 12 tile present, the full 16,384):
+
+| | |
+| --- | --- |
+| Tiles | 21,845 (16,384 at zoom 12) |
+| Shard file | 28,575,868 bytes (1.31 KB a tile) |
+| Shard wall time | 522 s, **31 zoom 12 tiles a second** on the e2-standard-2 |
+| Job run duration | 532 s (VM start to success about 9 min 30 s, including about 41 s scheduling) |
+| Peak memory | 156,803,072 bytes |
+| Virtual machines left running | none (`gcloud compute instances list` is empty) |
+
+The shard stays in scratch. A full run skips it, since its settings hash matches. This is a worst case shard for time: most shards are partly sea or outside the data. Time per task comes out inside the 25–44 tiles a second range in the estimate. Bytes per tile (1.31 KB) are above the sample's 1.1 KB; this shard is dense, so the 1.5–6 GB range stands as the range, with the top of it more likely than the bottom.
+
+### Estimate for approval (approved 2 November 2026, now run)
+
+| | |
+| --- | --- |
+| Shard tasks | 302, one per zoom 5 tile that touches the data |
+| Machine | spot `e2-standard-2`, `europe-west1`, 30 GB `pd-balanced` boot disk (a task holds at most 4 source COGs, about 300 MB, and a shard under about 100 MB) |
+| Parallelism | 8 tasks, 16 vCPU. `sprout/README.md` records 8 for its per-tile job. The task text says 20; the project's vCPU quota was not checked from here |
+| Per task | 16,384 zoom 12 tiles at most, average about 12,700. At 25 to 44 tiles a second that is 5 to 8.5 minutes, plus about 3 minutes for the VM, the downloads and the bootstrap |
+| Compute | about 40 to 60 task hours |
+| Wall time | **about 5 to 7.5 hours**. One machine would be about 24 to 43 hours, the 18 to 50 hours above |
+| Archive | 5.1 million tiles, **1.5 to 6 GB**, as estimated in task 04 (the Limpopo sample is about 1.1 KB a tile, the low end) |
+| Merge | one spot `e2-standard-4`, 12 GB memory, **60 GB disk** (shards, the Writer's tile spool, and the output are each about the archive size, so up to 18 GB at 6 GB), 4 hour limit. About 30 to 60 minutes: download, merge, verify, upload |
+| Cost | shards about $2 to $3 (60 VM hours at about $0.03 to $0.04), merge under $0.20, scratch storage a few cents for a day, archive $0.03 to $0.12 a month. No egress inside the region. Class A operations are in the hundreds |
+
+The pilot measured 31 tiles a second on the real machine (44 on the laptop). If the pilot shard runs slower, the wall time scales with it.
+
+### Run record (2 November 2026)
+
+| | |
+| --- | --- |
+| Archive | `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles` |
+| Archive bytes | **2,814,675,979** (2.62 GiB), inside the 1.5–6 GB estimate |
+| Zoom range | 0–12 |
+| Tiles | **5,084,649** (5,084,508 from shards, 141 at zooms 0–4), 1,357,087 distinct tile bodies |
+| Resampling | `q3` |
+| Shard job | `tiles-cropland-2024-v2-shards`, 302 tasks, 8 at a time, spot `e2-standard-2`, 09:57–12:57 UTC, **10,764 s (about 3 h)**, 302 succeeded. Sum of shard wall times 80,631 s (22.4 task hours), slowest shard 949 s, peak memory per shard at most 197,812,224 bytes. 3,808,915 zoom 12 tiles. Shard files 2,815,914,581 bytes in total |
+| Merge job | `tiles-cropland-2024-v2-merge`, one spot `e2-standard-4`, job run duration 468 s, merge wall 463 s (fetch 82 s, build 96 s), **peak memory 1,407,229,952 bytes** |
+| Checks | Tile ids strictly increasing across all zooms, every tile at zoom 5 and above from exactly one shard, per-zoom counts equal each shard's record. 12 zoom 8 subtrees (3,393 tiles) rebuilt from the sprout VRT matched the archive byte for byte |
+| Range request | 206, `Content-Range: bytes 0-126/2814675979`, `Accept-Ranges: bytes` |
+| Cache-Control | `public, max-age=3600` |
+| Wall time end to end | about 3 h 10 min (pilot excluded) |
+| Cost | about 24 VM hours of `e2-standard-2` and 8 minutes of `e2-standard-4`, about $1 (the estimate was $2–3). Storage of the archive about $0.06 a month. No egress |
+| Pilot | `tiles-cropland-2024-v2-shards-pilot228`, shard `5-23-14`, 532 s |
+| Scratch | `gs://nature-watch-bucket/scratch/tiles/cropland-2024-v2/` deleted, shards by the merge task, `code/` afterwards by hand |
+| Virtual machines left running | none |
+
+Faster than estimated: the real mean was 267 s a shard (the estimate assumed 5–11 minutes) because many shards are partly sea or outside the data. Bytes per tile were 0.55 KB on average.
+
+Not done here: the app still reads the version 1 PNG template. Task 07 in naturewatch-app changes that, and needs `mapbox-gl` 3.23.0 or later.
