@@ -270,7 +270,7 @@ Open `http://127.0.0.1:8766/preview.html`. Four maps move together: `max`, `q3`,
 
 ## Global run: sharded PMTiles (task 05)
 
-Status: code and local checks done. **The global Batch job has not been submitted.** It waits for approval of the estimate below. Nothing was uploaded and no virtual machine ran.
+Status: code and local checks done, and one pilot shard has run on Batch. **The 302-shard job and the merge have not been submitted.** It waits for approval of the estimate below. Nothing was uploaded and no virtual machine ran.
 
 Code: `tiles/pyramid.py` (planning, one shard, merge; knows nothing about cropland), `tiles/global_cropland.py` (binds a recipe, storage and Batch to it), tests in `tiles/test_global.py`. Another year is a new recipe. Another layer type is a new `render`, `reduce`, `encode` and `decode` in place of `layer()`.
 
@@ -313,6 +313,23 @@ Limpopo window, four sprout tiles read from disk (9 shards). Laptop, not an `e2-
 
 The shard run is **about 44 zoom 12 tiles a second** including the lower zooms. The merge of nine shards took 0.1 s; the archive was 12 KB smaller than the shards added, so the loss from not sharing tile bodies across shards is small. `python -m pytest tiles cookbook` passes.
 
+### Pilot shard (run)
+
+Batch job `tiles-cropland-2024-v2-shards-pilot228`, submitted 2 November 2026 09:37 UTC, one spot `e2-standard-2` in `europe-west1`, 30 GB disk. State SUCCEEDED. The bootstrap on the real image worked (numpy was present, `pmtiles` loaded from the wheel).
+
+Shard `5-23-14` (India, four source tiles, every zoom 12 tile present, the full 16,384):
+
+| | |
+| --- | --- |
+| Tiles | 21,845 (16,384 at zoom 12) |
+| Shard file | 28,575,868 bytes (1.31 KB a tile) |
+| Shard wall time | 522 s, **31 zoom 12 tiles a second** on the e2-standard-2 |
+| Job run duration | 532 s (VM start to success about 9 min 30 s, including about 41 s scheduling) |
+| Peak memory | 156,803,072 bytes |
+| Virtual machines left running | none (`gcloud compute instances list` is empty) |
+
+The shard stays in scratch. A full run skips it, since its settings hash matches. This is a worst case shard for time: most shards are partly sea or outside the data. Time per task comes out inside the 25–44 tiles a second range in the estimate. Bytes per tile (1.31 KB) are above the sample's 1.1 KB; this shard is dense, so the 1.5–6 GB range stands as the range, with the top of it more likely than the bottom.
+
 ### Estimate for approval (not run)
 
 | | |
@@ -327,6 +344,6 @@ The shard run is **about 44 zoom 12 tiles a second** including the lower zooms. 
 | Merge | one spot `e2-standard-4`, 12 GB memory, **60 GB disk** (shards, the Writer's tile spool, and the output are each about the archive size, so up to 18 GB at 6 GB), 4 hour limit. About 30 to 60 minutes: download, merge, verify, upload |
 | Cost | shards about $2 to $3 (60 VM hours at about $0.03 to $0.04), merge under $0.20, scratch storage a few cents for a day, archive $0.03 to $0.12 a month. No egress inside the region. Class A operations are in the hundreds |
 
-The 25 tiles a second end is a guess for a 2 vCPU spot machine reading local disk; only the 44 is measured. If the pilot shard runs slower, the wall time scales with it.
+The pilot measured 31 tiles a second on the real machine (44 on the laptop). If the pilot shard runs slower, the wall time scales with it.
 
 After approval, the run is: pilot shard, check its record and logs, the 302-task job, then the merge job. Status and cancel commands are printed by `submit`. No virtual machine is left running by design: Batch deletes each machine when its task ends. The run record (job ids, archive bytes, tile count, wall time, peak memory, and that no machine was left running) is added here after the run.
