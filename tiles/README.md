@@ -401,7 +401,7 @@ Safari 26.4 on macOS, Mapbox GL JS 3.34.1 (the app's `node_modules`), raster sou
 | `rgba-r1`, `rgba-r255` | 0 | 0 | 0, 0 |
 | `palette-r1`, `palette-r255` | 0 | 0 | 0, 0 |
 | `palette-r1` and `rgb-r1` at 512 px | — | — | 0 |
-| Safari on iPhone, Brave on iPhone | pending, run by hand | | |
+| Safari on iPhone, Brave on iPhone | not tested (skipped 7 November 2026) | | |
 
 Safari does not only add cropland. An all-class-0 tile gains 8,960 false cropland pixels (35 rows), as in the parcel, and the Swartland tile at zoom 12 loses 63,660 true cropland pixels. Nodata as alpha 0 (RGBA and palette) and as a tRNS colour key (RGB) is exact in both browsers, at the Madagascar edge and over the ocean. Safari ran with device pixel ratio 2.
 
