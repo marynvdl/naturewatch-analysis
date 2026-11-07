@@ -6,7 +6,7 @@ Repository: naturewatch-analysis.
 
 ## Goal
 
-Find the least costly reliable way to publish the global cropland 2024 class-value tiles so that Safari draws them exactly as Chrome does. Prove it before anything is published. Then, after approval, write the version 3 archive. Do not rebuild from the COGs unless the cheaper routes below fail.
+Find the least costly reliable way to publish the global cropland 2024 class-value tiles so that Safari draws them exactly as Chrome does, and so cropland loads as quickly as we can without changing the map design. Prove it before anything is published. Then, after approval, write the version 3 archive. Do not rebuild from the COGs unless the cheaper routes below fail.
 
 ## The bug
 
@@ -34,6 +34,12 @@ The client already reads the red channel: `classRasterPaint` in `frontend/nature
 
 The v2 build is described in `tiles/README.md`. It used 302 shards at zoom 5, merged into one archive. The merge task deleted the shards afterwards. The archive tiles are PNG with `tile_compression` none, and the directories are gzip. Metadata has `encoding: class-value`, `resampling: q3`.
 
+The v2 archive is about 2.8 GB on `gs://nature-watch-tiles`, with about 5.08 million addressed tiles, a 1.6 KB root directory and about 3.4 MB of leaf directories. Mapbox loads it as one PMTiles `url` and fetches tiles with HTTP Range requests. The object is served with `Cache-Control: public, max-age=3600`.
+
+The Treeloss layer in naturewatch-app reads Global Forest Watch XYZ PNG tiles from `tiles.globalforestwatch.org` through CloudFront. Each tile is its own URL. That path is optimised for edge caching and per-tile browser cache. Cropland feels slower in use; the reasons are not measured yet. Likely factors are direct GCS delivery without a CDN, PMTiles directory round trips before the first tile, small per-tile cache lifetime, 256 px tiles (more requests than 512 px), and gray-and-alpha PNGs that are larger than the two-class data needs. GPU colour (`classRasterPaint`) is unlikely to be the bottleneck.
+
+Delivery changes (CDN, cache headers, CORS preflight cache) and archive layout (root directory size, tile size, encoding) belong in the recommendation unless they need a separate task or approval outside this parcel.
+
 ## Do this
 
 - Ask me when you are not 90% sure or something is unclear.
@@ -48,16 +54,23 @@ The v2 build is described in `tiles/README.md`. It used 302 shards at zoom 5, me
    - Optionally an indexed (palette) PNG, which passed the Safari test and may be the smallest.
 2. **Transcode, don't rebuild.** Check whether the existing v2 archive can be read tile by tile and rewritten into the new encoding without the COG-to-tile build. Gray and alpha map one to one to R and alpha, so this should be possible. Confirm the shards are gone (`gcloud storage ls gs://nature-watch-bucket/scratch/tiles/cropland-2024-v2/`). Reading the archive costs a download of its bytes. Report bytes, where to run it (a machine in `europe-west1` to avoid egress, or a laptop), and the expected hours and cost for all candidates. Only if transcoding is wrong or impossible, estimate re-running the shard build with a new `encode` step, using the structure in `tiles/pyramid.py`.
 3. **Exactness.** For a representative sample of tiles, spread over zooms 0 to 12 and over places with all-zero, mixed, all-one and partly-nodata tiles, prove the transcode keeps every pixel: the class value, and nodata. Report the count of tiles checked and the count that differ. It must be zero.
-4. **Benchmark.** For the candidates, on the same sample, report compressed PNG bytes per tile and in total, the extrapolated archive size, processing time per 1,000 tiles, and peak memory. Include the cost of Range-request reads for a map view.
-5. **Safari and Chrome, through the real path.** Build a small PMTiles sample in each candidate encoding and draw it in the real map path: Mapbox GL JS 3.34.x (the app's version) with the raster source `url` set to the archive, not a direct PNG decode. Use the app's `classRasterPaint` (and the changed mix for R = 255). Test in Safari on macOS, Chrome, and Safari on iPhone (Brave on iPhone too if available). Cover:
+4. **Load time in the browser.** On a cold cache, measure how long cropland and treeloss take to show tiles on the same view in the real app (or a minimal page with the same sources). Use the browser Network panel. For each layer record: time to first visible tile, total requests, bytes transferred, OPTIONS preflights (if any), and whether responses are 206 Range or full GET. Compare one pan at a fixed zoom over land with cropland (for example Zakouma) and a similar view with treeloss. Say what you did and paste a short table in `tiles/README.md`. This is the baseline before optimisations.
+5. **Benchmark.** For the candidates, on the same sample, report compressed PNG bytes per tile and in total, the extrapolated archive size, processing time per 1,000 tiles, and peak memory. Compare palette (colour type 3) against RGB and RGBA on size and decode time. Extrapolate total archive size and bytes per typical map view from step 4. Include directory overhead (header plus root and leaf reads) for v2 and for a v3 layout with a larger root directory if the writer allows it.
+6. **Safari and Chrome, through the real path.** Build a small PMTiles sample in each candidate encoding and draw it in the real map path: Mapbox GL JS 3.34.x (the app's version) with the raster source `url` set to the archive, not a direct PNG decode. Use the app's `classRasterPaint` (and the changed mix for R = 255). Test in Safari on macOS, Chrome, and Safari on iPhone (Brave on iPhone too if available). Cover:
    - low and high zooms (at least 2, 6, 9, 12 and one past 12);
    - tile boundaries, with no seams or lines;
    - different basemaps: the app's Standard style, a light style, a satellite style and a dark style;
    - an area that is all class 0, a mixed area, and nodata (open ocean, or a 10° tile the publisher does not provide);
    - the Zakouma area near 10.02° N, 22.63° E, which shows the bug today. Include the v2 archive in the same page as the control, to show that the bug still appears there.
-6. **Check `raster-resampling: nearest`.** The layer sets nearest resampling. For categorical data, nearest keeps class values unmixed, and Mapbox's raster-color works on the sampled value. Check on the real path whether `linear` would blend 0 and 1 into 0.5 and show wrong colours at edges, and whether nearest causes visible artefacts at fractional zooms. Report what you find and recommend keeping or changing it. Do not change the recipe or the app.
-7. **Recommend.** Write which encoding and which route (transcode or rebuild) is the least costly reliable one, with the numbers. Record it in `tiles/README.md` under a new section for version 3. Open a pull request into `main` with the investigation, scripts and tests. Do not publish.
-8. Stop and wait for approval.
+7. **Delivery and archive layout.** Recommend what to change for faster loads, with cost and who does it (this task, a follow-up task, or infrastructure outside the repos). At least cover:
+   - A CDN or reverse proxy in front of `nature-watch-tiles` that caches Range responses for `.pmtiles` (for example Cloud CDN on the bucket, or Cloudflare). Estimate monthly cost at low and moderate traffic and whether invalidation on a new version path is enough (versioned URLs need no purge).
+   - Object metadata on upload: `Cache-Control: public, max-age=31536000, immutable` for versioned archives, instead of `max-age=3600`. Bucket CORS: long `Access-Control-Max-Age` if preflights appear in step 4.
+   - PMTiles directory depth: whether a larger root directory (up to about 16 KB on first read) cuts a round trip for typical views. Check what the merge or transcoder can set.
+   - Tile size 512 px instead of 256: fewer requests per screen at the cost of a full rebuild and a catalog `tileSize` change in task 10. Estimate archive size and whether Mapbox still colourises class tiles correctly. Do not build 512 unless the recommendation says it is worth the cost.
+   - Do not turn on billable CDN or change production bucket settings in stage 1. Stage 2 may set cache headers on the new v3 object only, after approval for anything that bills.
+8. **Check `raster-resampling: nearest`.** The layer sets nearest resampling. For categorical data, nearest keeps class values unmixed, and Mapbox's raster-color works on the sampled value. Check on the real path whether `linear` would blend 0 and 1 into 0.5 and show wrong colours at edges, and whether nearest causes visible artefacts at fractional zooms. Report what you find and recommend keeping or changing it. Do not change the recipe or the app.
+9. **Recommend.** Write which encoding, which route (transcode or rebuild), and which delivery or layout changes are the best value for faster loads without harming Safari correctness. One section in `tiles/README.md` for version 3. List follow-ups that are out of scope for stage 2 (for example global CDN enablement) as separate tasks if needed. Open a pull request into `main` with the investigation, scripts and tests. Do not publish.
+10. Stop and wait for approval.
 
 ### Stage 2: build and verify version 3 (after approval)
 
@@ -65,7 +78,7 @@ The v2 build is described in `tiles/README.md`. It used 302 shards at zoom 5, me
 - Before upload, verify on the local file or scratch copy:
   - archive integrity: header, directories, counts of addressed tiles and entries, and that every tile id in v2 exists in v3, with no additions;
   - every tile's class values and alpha equal the v2 tile, for all tiles if it is cheap, and otherwise for a stated random sample of at least 10,000 tiles plus every non-uniform tile at zooms 0 to 8;
-  - the file answers HTTP Range requests with 206 once uploaded, and `Cache-Control` matches v2;
+  - the file answers HTTP Range requests with 206 once uploaded, and `Cache-Control` is `public, max-age=31536000, immutable` (or the headers approved in stage 1);
   - Safari and Chrome draw the v3 file with no artefacts, at the zooms and places in stage 1.
 - Upload after the checks pass. The tile bucket's CORS settings already allow the app origins, so confirm they apply to the new object.
 - Explain the billable work, with the expected cost and a way to cancel, and get approval before starting it. After an authorized run, record the job ids, the output, how to check it, and how to cancel it, then return. Do not wait in the chat for a job.
