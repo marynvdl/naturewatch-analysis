@@ -369,3 +369,182 @@ The pilot measured 31 tiles a second on the real machine (44 on the laptop). If 
 Faster than estimated: the real mean was 267 s a shard (the estimate assumed 5–11 minutes) because many shards are partly sea or outside the data. Bytes per tile were 0.55 KB on average.
 
 Not done here: the app still reads the version 1 PNG template. Task 07 in naturewatch-app changes that, and needs `mapbox-gl` 3.23.0 or later.
+
+## Version 3: class tiles that Safari reads exactly (task 09)
+
+Status: **stage 1 done, waiting for approval.** Nothing was published and no virtual machine ran. Stage 2 writes `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles` after approval.
+
+Code: `tiles/transcode.py` (read v2, write a new encoding, compare, benchmark), `tiles/v3_check.py` and `tiles/v3_check/` (browser checks through Mapbox GL JS and PMTiles), tests in `tiles/test_transcode.py`. Local outputs are in `data/tiles/v3/` (not committed).
+
+### Recommendation
+
+| | Choice | Why |
+| --- | --- | --- |
+| Encoding | **Palette PNG, red 1 is cropland** (`palette-r1`): index 0 is RGB 0,0,0, index 1 is RGB 1,0,0, index 2 is nodata with tRNS alpha 0. 1 bit a pixel when a tile has no nodata, 2 bits when it has | Exact in Safari and Chrome through the real map path. **31% smaller than v2** (about 1.95 GB against 2.81 GB). The red channel is 0 or 1 as today, so `classRasterPaint` keeps `raster-color-mix [255, 0, 0, 0]` and task 10 only changes the URL. Fastest to write (0.85 s per 1,000 tiles against 9 s for RGB) |
+| Route | **Transcode v2**, no COG rebuild | Every tile keeps its pixels (checks below). One spot VM in `europe-west1` reads the 2.8 GB archive inside the region, so no egress. About $0.10 |
+| Tile size | **512 px**, chosen 7 November 2026 | 512 px tiles come from the same transcode (a 512 tile at zoom z is the four v2 tiles at z + 1), not a rebuild. With Chrome's request queue (below) they halve the time to load a view and cut a pan by about 4. They change the tile ids and the zoom range (0 to 11), so stage 2's "same tile ids" check becomes "every v2 tile is a quarter of one v3 tile", and task 10 sets `tileSize: 512` and `maxzoom: 11` |
+| Cache header | `Cache-Control: public, max-age=31536000, immutable` on the v3 object | The path is versioned. Free. Helps a repeat visit. It does not fix the slow first load (measured below) |
+| CORS | No change | No preflight in Chrome or Safari: a single `Range` is a safelisted header |
+| `raster-resampling` | Keep `nearest` | `linear` adds blended colours at nodata edges and tile seams (below) |
+| Root directory | Optional in stage 2: put zooms 0–7 in the root | Saves the leaf request for views at tile zoom 7 and below (the app opens at map zoom 5). Needs a small custom directory writer and a local check that Mapbox reads it |
+| CDN | Follow-up task, outside this parcel | The only change that removes the Chrome queue for good is one URL per tile behind an edge cache (below) |
+
+### Why Safari is wrong, through the real path
+
+Safari 26.4 on macOS, Mapbox GL JS 3.34.1 (the app's `node_modules`), raster source `url` set to the archive, `tileSize: 256`, `maxzoom: 12`, nearest resampling, and `classRasterPaint`'s mix. The check page paints class 0 blue, class 1 red and leaves nodata on a green background, then reads every texel centre back from the WebGL canvas and compares it with the class from v2. 12 views, 42 tiles, 2,752,512 texels per archive: Zakouma at zooms 2, 6, 9, 12 and 13 (overzoomed 12), the Madagascar nodata edge at 6, 9 and 12, Swartland farmland at 9, 12 and 13, and open ocean at 6. Each view at zoom 12 or below sits on the corner of four tiles, so tile boundaries are inside it.
+
+| Archive | Safari, macOS: texels wrong (map) | Safari: pixels wrong (PNG on a 2D canvas) | Chrome 157 headless: wrong (map, canvas) |
+| --- | --- | --- | --- |
+| v2 on the bucket | 392,031 | — | 0 |
+| v2 tiles, local copy (byte-identical) | 392,031 | 422,780 | 0, 0 |
+| `rgb-r1`, `rgb-r255` | 0 | 0 | 0, 0 |
+| `rgba-r1`, `rgba-r255` | 0 | 0 | 0, 0 |
+| `palette-r1`, `palette-r255` | 0 | 0 | 0, 0 |
+| `palette-r1` and `rgb-r1` at 512 px | — | — | 0 |
+| Safari on iPhone, Brave on iPhone | not tested (skipped 7 November 2026) | | |
+
+Safari does not only add cropland. An all-class-0 tile gains 8,960 false cropland pixels (35 rows), as in the parcel, and the Swartland tile at zoom 12 loses 63,660 true cropland pixels. Nodata as alpha 0 (RGBA and palette) and as a tRNS colour key (RGB) is exact in both browsers, at the Madagascar edge and over the ocean. Safari ran with device pixel ratio 2.
+
+### Every pixel kept
+
+`transcode.py sample` drew a stratified sample from the v2 directories: per zoom 0 to 12, 100 random addressed tiles, 100 random distinct tile bodies and up to 100 tiles with a missing neighbour (the nodata edge), plus the 10 most shared bodies and every tile over Zakouma. 2,324 tiles (1,042 mixed, 821 partly nodata, 461 all class 0). Each candidate was transcoded and compared with v2 through GDAL's PNG driver, which is independent of the transcoder's decoder.
+
+| Encoding | Tiles checked | Tiles that differ | Missing or extra tile ids |
+| --- | --- | --- | --- |
+| every candidate in the table below | 2,324 | **0** | 0 |
+
+The browser view archive (3,133 tiles: all of zooms 0–6 and three boxes to zoom 12) also has 0 differences in every candidate. Re-encoding v2 as gray and alpha gives back all 2,324 v2 tiles byte for byte, which checks the decoder.
+
+There is no all-class-1 tile in v2. Any uniform tile compresses to 499 bytes, and all 19 distinct 499-byte bodies were read: one is the all-zero tile, shared by 3,688,282 tiles (72.5% of the archive), and the rest are mixed. The tests cover all-one tiles on synthetic data.
+
+### Size and speed
+
+On the 2,324-tile sample. Laptop, Python 3.14, numpy and zlib level 9, filter 0 as in v2. Archive size is extrapolated per zoom from the distinct-body stratum and the v2 distinct bytes at that zoom, plus 3.4 MB of directories.
+
+| Encoding | Sample bytes (v2 = 3,515,275) | Mixed tile | All-zero tile | Partly nodata tile | Write, s per 1,000 tiles | Archive, extrapolated |
+| --- | --- | --- | --- | --- | --- | --- |
+| v2 gray + alpha | 3,515,275 | 2,648 | 499 | 641 | 7.7 | 2.81 GB (actual) |
+| `rgb-r1` / `rgb-r255` | 3,491,318 / 3,492,686 | 2,615 | 270 | 782 | 9.5 | 2.74 GB |
+| `rgba-r1` / `rgba-r255` | 4,145,536 / 4,159,281 | 2,983–2,996 | 659 | 893 | 8.4–9.0 | 3.22 GB |
+| **`palette-r1`** / `palette-r255` | **2,201,987** | **1,840** | **106** | **287** | **0.85** | **1.95 GB** |
+| `rgb-r1-nodata2` (nodata as red 2) | 3,478,082 | 2,615 | 270 | 766 | 9.1 | 2.74 GB |
+
+Peak memory of the benchmark, holding all 2,324 tiles as arrays, was 285 MB. A transcode process peaks at about 100 MB. Decoding on a 2D canvas in Safari took about 85–105 ms per 42 tiles for every encoding, so decode time does not separate them. `rgb-r1-nodata2` was only benchmarked: alpha 0 is safe, so nodata does not need a class value.
+
+At 512 px the browser view archive was 2,686,525 bytes in 892 tiles against 2,726,617 bytes in 3,133 tiles at 256 px (`palette-r1`), so the size is about the same.
+
+### Load time in the browser (baseline, v2)
+
+Method. `v3_check.py load` opens `load.html` in headless Chrome 157 with a new profile each run (cold cache) and a Chrome net log. Blank style, so only the layer's own requests count. Mapbox GL JS 3.34.1, globe, 1024 × 768, Zakouma at map zoom 8 (tile zoom 9), then one pan of 614 px at the same zoom. Same view for both layers. Cropland is the live v2 archive; treeloss is the app's Global Forest Watch template for 2001–2024. Times are from adding the layer. Safari was opened by hand on two places it had not loaded before.
+
+| | Cropland v2 (Chrome, 3 runs) | Treeloss (Chrome, 3 runs) | Cropland v2 (Safari) | Treeloss (Safari) |
+| --- | --- | --- | --- | --- |
+| First tile | 2.2–2.6 s | 0.27–1.5 s | 0.34 s, 0.96 s | 1.04 s, 21.6 s (origin miss) |
+| View loaded | 6.8–10.0 s | 0.43–2.3 s | 1.04 s, 1.05 s | 1.8 s, 23.3 s |
+| Pan loaded | 1.5–2.2 s | 0.38–1.3 s | 0.9 s, 1.3 s | 1.2 s, 1.8 s |
+| Requests | 31: 23 answered, 8 cancelled by Mapbox | 28 (20 tiles, 8 for the pan) | | |
+| Bytes | 75,974 | 209,020 | | |
+| Status | 206 | 200 | | |
+| OPTIONS preflights | 0 | 0 | | |
+
+Cropland moves a third of treeloss's bytes and is still slower in Chrome. The net log shows why: the 16 KB header read took 1.6 s (cold connection), the leaf 0.36 s, and then the 20 tile requests all started at once but **finished one after another, about 0.3–0.5 s apart**, the last at 7.3 s.
+
+What causes the queue. 20 parallel `fetch` Range reads of the archive from the same page finish together in 1.3–2.3 s with `cache: 'no-store'`, and one after another in 6.8–10.9 s with the default cache. Chrome's HTTP cache lets one request at a time work on a URL, and every tile of an archive is the same URL. The `pmtiles` library inside Mapbox's provider only turns the cache off on Chrome for Windows. A local server with a 300 ms delay gave 6.1 s for 20 reads whatever the `Cache-Control` (`no-store`, `max-age=3600` or `immutable`), so headers on the object do not change it. Safari does not queue: 20 reads finished in 0.95 s with the default cache. So Chrome, Edge and Brave on desktop and Android pay one GCS round trip (about 0.3 s) per tile in a row. Treeloss has a URL per tile behind CloudFront, so it never queues.
+
+The same Mapbox load from a local server took 0.2 s to the first tile and 0.24 s to the whole view, so decoding and drawing are not the cost.
+
+512 px against 256 px, Chrome, local server with 300 ms per request, Zakouma at map zoom 10:
+
+| | 256 px (`palette-r1`) | 512 px (`palette-r1-512`) |
+| --- | --- | --- |
+| Tiles for the view, for the pan | 20, 12 | 9, 3 |
+| First tile | 1.11 s | 1.16 s |
+| View loaded | 6.96 s | 3.63 s |
+| Pan loaded | 3.71 s | 0.94 s |
+
+Directories. v2 has a 1,624-byte root and 376 leaves of about 9 KB (4,096 entries each); a view needs one leaf after the header. Smaller leaves only make that read smaller (1,024 entries: 2.3 KB). Putting the tile entries of zooms 0–7 in the root (4,170 entries) with pointers to 4,096-entry leaves for the rest gives a 13 KB root, inside the first 16 KB read, so a view at tile zoom 7 or below needs no leaf request. Zooms 0–8 would need a 35 KB root.
+
+### `raster-resampling`
+
+Same check, map between zooms (zoom + 0.37), every device pixel compared with the texel it falls in, Chrome:
+
+| | Pixels compared | Different | Blended colours |
+| --- | --- | --- | --- |
+| `nearest` | 3,145,728 per archive | 28,908 (14,148 gained, 14,530 lost) | **0** |
+| `linear` | 3,145,728 per archive | 27,667 (12,919 gained, 13,955 lost) | **820** |
+
+The differences under `nearest` are at texel boundaries (about as many lost as gained) and are the same for every encoding, so they are where the check's own rounding and Mapbox's placement meet, not wrong classes. Under `linear` the step expression keeps the edge crisp between class 0 and 1, but where a texel is next to nodata the colour blends: a 257-pixel line along the ocean tile edge at zoom 6 and 520 pixels at zoom 2. At texel centres (integer zoom) both give 0 differences. Keep `nearest`. No artefact from `nearest` at fractional zoom was seen.
+
+### Delivery: what to change and who does it
+
+| Change | Effect | Cost | Who |
+| --- | --- | --- | --- |
+| Palette encoding (v3) | Fixes Safari; 31% fewer bytes | about $0.10 once, about $0.04 a month for the new object | stage 2 |
+| 512 px tiles (v3) | About half the load time and a quarter of the pan time in Chromium | the same transcode, about $0.10–0.20 | stage 2 if approved, `tileSize` and `maxzoom` in task 10 |
+| `immutable` Cache-Control on v3 | Repeat visits read from the browser cache | none | stage 2 |
+| Zooms 0–7 in the root | One request fewer when the map opens | none | stage 2, optional |
+| CDN in front of the bucket | Each queued request about 30–50 ms instead of about 300 ms | Cloud CDN needs an external HTTPS load balancer: about $18 a month for the forwarding rule, plus about $0.08 per GB served. Low traffic about $18–20, 100 GB a month about $26. Versioned paths need no invalidation | follow-up task, infrastructure |
+| One URL per tile (for example a Cloudflare Worker reading the archive from R2, or `go-pmtiles serve` on Cloud Run) | Removes the Chrome queue and caches each tile at the edge, like treeloss | R2 storage about $0.03 a month, Workers free up to 100,000 requests a day, about $5 a month above. The catalog would use a `{z}/{x}/{y}` template | follow-up task, infrastructure and app |
+
+Prices are list prices as I read them on 7 November 2026; check them before enabling anything.
+
+### Graded display like Global Forest Watch (local comparison, 7 November 2026)
+
+Question: can cropland be drawn with opacity that follows how much of a cell is cropland, as Global Forest Watch does for treeloss? GFW says that below zoom 13 loss pixels are shaded by the density of loss at 30 m, and that shading is uniform from zoom 13. v3 as planned cannot do this: it stores yes or no, and `q3` throws the share away when it builds the coarse zooms.
+
+What was built (laptop, nothing in the cloud, nothing committed under `data/`): two 1° windows, Zakouma (22.1–23.1°E, 10–11°N) and Swartland (18.3–19.3°E, 32.8–33.8°S), from sprout tiles `20N_020E` and `30S_010E` (8.6 MB read). For each window: the planned v3 tiles (`q3`, `palette-r1`), and share tiles (`cropland.py --resampling share`, the task 04 average-up pyramid) rewritten by `transcode.py share` as palette PNGs. Index 0 is nodata, the red channel is the share on a 0–255 scale, in 15 steps (4-bit palette) or 255 steps (8-bit palette). Any share above 0 keeps at least the faintest step, so sparse cropland does not vanish. A local copy of the recipe with `resampling: share` was used; the repo recipe is unchanged.
+
+| Window | Planned class tiles (palette) | Share, 15 steps | Share, 255 steps |
+| --- | --- | --- | --- |
+| Zakouma, 220 tiles | 155,308 B | 486,501 B (3.1x) | 882,487 B (5.7x) |
+| Swartland, 259 tiles | 423,811 B | 1,344,691 B (3.2x) | 2,303,149 B (5.4x) |
+
+Written at 1.1–2.9 s per window. Share to palette: nodata is exact; 15 steps are within 17 of 255 (7%), 255 steps within 1; 0 cropland pixels fell to 0 in either. Safari safety is the same as the class palette: palette PNG, red channel, no gray.
+
+Paint (`tiles/v3_check/shade.html`, Mapbox GL JS 3.34.1, nearest, the app's orange): `raster-color` interpolates `raster-value` to an orange whose opacity is 0.2 + 0.75 × √share, with 0 transparent. That is one layer below zoom 12 and a second, solid layer from zoom 12 up (`maxzoom` and `minzoom` on the layers). Zoom-dependent colour inside one layer was not tried. Looked at in Chrome on Zakouma at zooms 6.5, 8 and 10.5, Swartland at 9.3, 11.2 and 12.2, on the Standard monochrome and satellite basemaps (screenshots in `data/tiles/v3/shots/`).
+
+What it looks like. The solid class tiles paint a flat orange mass. The graded panes show where the cropland is dense and where it is broken up by roads, rivers, bush and field edges, and the edge of a cropland area fades instead of ending in a hard line. This is clearest at zoom 8–10; at zoom 12 and above both are solid, as GFW's are. 15 steps and 255 steps could not be told apart on screen at any zoom I looked at. Farmland as dense as Swartland saturates to nearly solid orange with this curve, so the gain there is mostly in the gaps; sparse areas such as Zakouma gain the most. Zoom 6 and below looks almost the same as the solid map, because cropland is a few pixels wide there.
+
+Cost, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
+
+What it changes besides cost. The layer would show a share, not a class, so the info text and legend change, and the colour curve becomes a design choice. Place figures are unaffected, since they come from the sprout.
+
+### Stage 2 estimate (for approval)
+
+512 px was chosen; the 256 px column is kept for comparison.
+
+| | 256 px palette | 512 px palette (chosen) |
+| --- | --- | --- |
+| Where | one spot `e2-standard-2`, `europe-west1`, Batch, 30 GB disk | same |
+| Read | v2 archive 2.81 GB inside the region | same |
+| Work | 1,357,087 distinct bodies at about 2 ms each on the VM, about 1 hour, then compare every tile through GDAL, about 1.5 hours | about 1.27 million 512 tiles from 5.08 million children, about 2 hours, then compare, about 2 hours |
+| Output | about 1.95 GB | about 1.9 GB |
+| Memory | under 500 MB | under 1 GB |
+| Cost | under $0.15 compute, no egress, about $0.04 a month storage while v2 stays | under $0.25 compute, the same storage |
+
+The check before upload compares every tile, not a sample: tile ids (or quarters at 512), class values and nodata. The upload sets the cache header and checks a 206 Range answer and CORS from `http://localhost:5173` and the app origins. Nothing is written under `v2/`.
+
+### Cost of stage 1
+
+No compute in the cloud. Reads of the public v2 archive from this laptop: 3.4 MB of directories, 4.6 MB for the sample, 4.0 MB for the browser views, a few MB to look for all-one tiles, and under 1 MB in the load runs: under 20 MB, under $0.01 of egress. `gcloud storage ls` confirmed the v2 shards are gone (`scratch/tiles/` is empty) and that `cropland/2024/` holds `v1/` and `v2/` only. No virtual machine ran.
+
+### Run it again
+
+```bash
+pip install -r cookbook/requirements.txt -r tiles/requirements.txt
+python tiles/transcode.py inventory --out data/tiles/v3/inventory
+python tiles/transcode.py sample --inventory data/tiles/v3/inventory.npy --out data/tiles/v3/sample
+python tiles/transcode.py transcode --src data/tiles/v3/sample/v2-sample.pmtiles --dest data/tiles/v3/sample/palette-r1.pmtiles --encoding palette-r1
+python tiles/transcode.py verify --a data/tiles/v3/sample/v2-sample.pmtiles --b data/tiles/v3/sample/palette-r1.pmtiles --encoding palette-r1
+python tiles/transcode.py bench --src data/tiles/v3/sample/v2-sample.pmtiles --rows data/tiles/v3/sample/sample.json --encoding palette-r1 --encoding rgb-r1
+python tiles/transcode.py views --inventory data/tiles/v3/inventory.npy --dest data/tiles/v3/views/gray-alpha.pmtiles \
+  --box 21.8,9.2,23.4,10.8 --box 49.2,-18.9,50.8,-17.4 --box 18.0,-34.1,19.6,-32.6
+# then transcode views/gray-alpha.pmtiles into views/<encoding>.pmtiles, and --tile-size 512 into views/<encoding>-512.pmtiles
+
+export MAPBOX_ACCESS_TOKEN=<public token>
+python tiles/v3_check.py chrome --page check                 # headless Chrome, all archives
+python tiles/v3_check.py load --runs 3                        # cold load, cropland and treeloss, with net logs
+python tiles/v3_check.py serve --lan                          # check.html and compare.html for Safari, an iPhone or Brave
+```
+
+The pages run on `http://localhost:5173` because the tile bucket's CORS allows that origin, so the live v2 archive can be the control. On a phone the address is the laptop's LAN address; the live archive is left out there, and the local v2 copy (byte-identical) is the control. `compare.html` shows every archive side by side with the app's paint and globe, with Standard monochrome, light, satellite and dark basemaps; `?single=1` is one map with a picker, for a phone. Results go to `data/tiles/v3/results.jsonl`.

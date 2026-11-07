@@ -1,0 +1,219 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cropland v3 tile check</title>
+<link href="/lib/mapbox-gl.css" rel="stylesheet">
+<script src="/lib/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  body { font: 13px system-ui, sans-serif; margin: 8px; }
+  #map { width: 512px; height: 512px; }
+  table { border-collapse: collapse; margin-top: 8px; }
+  td, th { border: 1px solid #ccc; padding: 2px 6px; text-align: right; }
+  .bad { background: #fdd; } .good { background: #dfd; }
+</style>
+</head>
+<body>
+<h3>Cropland tiles through Mapbox GL JS and PMTiles</h3>
+<p>Each view reads every texel centre back from the WebGL canvas. Blue is class 0, red is class 1, green is nodata. Then each PNG is decoded on a 2D canvas.</p>
+<div id="status">starting</div>
+<div id="map"></div>
+<table id="out"></table>
+<script>
+// Classes are drawn as pure colours so a readback can tell 0, 1 and nodata apart exactly.
+const P = new URLSearchParams(location.search);
+const C = window.CHECK;
+// The tile bucket's CORS allows localhost:5173, not a LAN address, so a phone skips the live archive.
+const defaults = location.hostname === 'localhost' ? ['v2-live', ...C.encodings] : C.encodings;
+const encodings = (P.get('enc') || defaults.join(',')).split(',');
+const frac = Number(P.get('frac') || 0);
+const resampling = P.get('resampling') || 'nearest';
+const label = P.get('label') || '';
+const statusEl = document.getElementById('status');
+const rows = [];
+
+mapboxgl.accessToken = C.token;
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': 'rgb(0,255,0)' } }] },
+  center: [0, 0], zoom: 1, projection: 'mercator',
+  preserveDrawingBuffer: true, antialias: false, fadeDuration: 0, attributionControl: false,
+});
+
+const sourceUrl = enc => enc === 'v2-live' ? C.v2 : `${location.origin}/archives/${enc}.pmtiles`;
+const scaleOf = enc => enc.includes('r255') ? 255 : 1;
+const mixOf = enc => enc.includes('r255') ? [1, 0, 0, 0] : [255, 0, 0, 0];
+
+function tileLngLat(z, x, y) {
+  const n = 2 ** z;
+  return [x / n * 360 - 180, Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI];
+}
+
+function idle(ms = 60000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('idle timeout')), ms);
+    map.once('idle', () => { clearTimeout(timer); resolve(); });
+    map.triggerRepaint();
+  });
+}
+
+function setEncoding(enc) {
+  if (map.getLayer('c')) map.removeLayer('c');
+  if (map.getSource('c')) map.removeSource('c');
+  const big = enc.endsWith('-512');
+  map.addSource('c', { type: 'raster', tileSize: big ? 512 : 256, url: sourceUrl(enc), maxzoom: big ? 11 : 12 });
+  map.addLayer({
+    id: 'c', type: 'raster', source: 'c',
+    paint: {
+      'raster-resampling': resampling,
+      'raster-color-mix': mixOf(enc),
+      'raster-color-range': [0, 1],
+      'raster-color': ['step', ['raster-value'], 'rgb(0,0,255)', 0.5, 'rgb(255,0,0)'],
+      'raster-fade-duration': 0,
+      'raster-opacity': 1,
+    },
+  });
+}
+
+const expectedCache = new Map();
+async function expected(z, x, y) {
+  const key = `${z}/${x}/${y}`;
+  if (!expectedCache.has(key)) {
+    expectedCache.set(key, new Uint8Array(await (await fetch(`/expected/${key}`)).arrayBuffer()));
+  }
+  return expectedCache.get(key);
+}
+
+function classify(r, g, b) {
+  if (r > 200 && g < 50 && b < 50) return 1;
+  if (b > 200 && r < 50 && g < 50) return 0;
+  if (g > 200 && r < 50 && b < 50) return 255;
+  return -1;
+}
+
+async function checkView(enc, test) {
+  // frac = 0: one read per texel centre. frac > 0: the map sits between zooms and every device
+  // pixel is compared with the texel it falls in, which is what nearest resampling should draw.
+  map.jumpTo({ center: test.center, zoom: test.map_zoom + frac });
+  await idle();
+  const canvas = map.getCanvas();
+  const gl = map.painter.context.gl;
+  const w = canvas.width, h = canvas.height, dpr = w / canvas.clientWidth;
+  const pixels = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  const row = { page: 'check', mode: frac ? 'map-frac' : 'map', enc, test: test.id, resampling, checked: 0, differ: 0, false_one: 0, lost_one: 0, other: 0, skipped: 0 };
+  const compare = (X, Y, exp) => {
+    if (X < 0 || Y < 0 || X >= w || Y >= h) { row.skipped++; return; }
+    const k = ((h - 1 - Y) * w + X) * 4;
+    const got = classify(pixels[k], pixels[k + 1], pixels[k + 2]);
+    row.checked++;
+    if (got !== exp) {
+      row.differ++;
+      if (got === 1 && exp !== 1) row.false_one++;
+      else if (exp === 1 && got !== 1) row.lost_one++;
+      if (got === -1) row.other++;
+    }
+  };
+  for (const [z, x, y] of test.tiles) {
+    const want = await expected(z, x, y);
+    const nw = map.project(tileLngLat(z, x, y));
+    const se = map.project(tileLngLat(z, x + 1, y + 1));
+    const sx = (se.x - nw.x) / 256, sy = (se.y - nw.y) / 256;
+    if (!frac) {
+      for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) {
+        compare(Math.floor((nw.x + (i + 0.5) * sx) * dpr), Math.floor((nw.y + (j + 0.5) * sy) * dpr), want[j * 256 + i]);
+      }
+      continue;
+    }
+    for (let Y = Math.max(0, Math.ceil(nw.y * dpr)); Y < Math.min(h, Math.floor(se.y * dpr)); Y++) {
+      const j = Math.floor(((Y + 0.5) / dpr - nw.y) / sy);
+      for (let X = Math.max(0, Math.ceil(nw.x * dpr)); X < Math.min(w, Math.floor(se.x * dpr)); X++) {
+        const i = Math.floor(((X + 0.5) / dpr - nw.x) / sx);
+        if (i < 0 || j < 0 || i > 255 || j > 255) continue;
+        compare(X, Y, want[j * 256 + i]);
+      }
+    }
+  }
+  return row;
+}
+
+async function checkDecode(enc, test) {
+  // The original test: decode the PNG on a 2D canvas, no Mapbox.
+  const row = { page: 'check', mode: 'canvas', enc, test: test.id, checked: 0, differ: 0, false_one: 0, decode_ms: 0 };
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 256;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  for (const [z, x, y] of test.tiles) {
+    const response = await fetch(`/png/${enc}/${z}/${x}/${y}`);
+    if (response.status === 404) continue;
+    const blob = await response.blob();
+    const started = performance.now();
+    const bitmap = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    context.clearRect(0, 0, 256, 256);
+    context.drawImage(bitmap, 0, 0);
+    const data = context.getImageData(0, 0, 256, 256).data;
+    row.decode_ms += performance.now() - started;
+    const want = await expected(z, x, y);
+    const scale = scaleOf(enc);
+    for (let p = 0; p < 65536; p++) {
+      const got = data[p * 4 + 3] === 0 ? 255 : data[p * 4] / scale;
+      row.checked++;
+      if (got !== want[p]) { row.differ++; if (got === 1) row.false_one++; }
+    }
+  }
+  row.decode_ms = Math.round(row.decode_ms * 10) / 10;
+  return row;
+}
+
+function show() {
+  const table = document.getElementById('out');
+  const keys = ['mode', 'enc', 'test', 'checked', 'differ', 'false_one', 'lost_one', 'other', 'skipped', 'decode_ms'];
+  table.innerHTML = '<tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr>' + rows.map(r =>
+    `<tr class="${r.differ ? 'bad' : 'good'}">` + keys.map(k => `<td>${r[k] ?? ''}</td>`).join('') + '</tr>').join('');
+}
+
+async function post(payload) {
+  await fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+
+map.on('load', async () => {
+  const summary = {};
+  try {
+    for (const enc of encodings) {
+      setEncoding(enc);
+      for (const test of C.tests) {
+        statusEl.textContent = `map ${enc} ${test.id}`;
+        try {
+          rows.push(await checkView(enc, test));
+        } catch (error) {
+          rows.push({ page: 'check', mode: 'map', enc, test: test.id, error: String(error), differ: -1, checked: 0 });
+        }
+        show();
+      }
+      if (enc !== 'v2-live' && !enc.endsWith('-512') && !P.has('nodecode')) {
+        for (const test of C.tests) {
+          statusEl.textContent = `canvas ${enc} ${test.id}`;
+          rows.push(await checkDecode(enc, test));
+          show();
+        }
+      }
+      const mine = rows.filter(r => r.enc === enc);
+      summary[enc] = {
+        map_checked: mine.filter(r => r.mode.startsWith('map')).reduce((a, r) => a + r.checked, 0),
+        map_differ: mine.filter(r => r.mode.startsWith('map')).reduce((a, r) => a + r.differ, 0),
+        canvas_differ: mine.filter(r => r.mode === 'canvas').reduce((a, r) => a + r.differ, 0),
+        decode_ms: Math.round(mine.filter(r => r.mode === 'canvas').reduce((a, r) => a + r.decode_ms, 0)),
+      };
+    }
+    statusEl.textContent = 'done ' + JSON.stringify(summary);
+  } catch (error) {
+    summary.error = String(error);
+    statusEl.textContent = 'error ' + error;
+  }
+  await post({ page: 'check', label, resampling, dpr: devicePixelRatio, summary, rows, final: true });
+});
+</script>
+</body>
+</html>
