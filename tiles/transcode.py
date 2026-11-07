@@ -118,6 +118,43 @@ def _palette(values: np.ndarray, scale: int) -> bytes:
     return _png(rows, 1, 3, [(b"PLTE", bytes([0, 0, 0, scale, 0, 0]))])
 
 
+def share_palette_png(data: bytes, depth: int) -> bytes:
+    """A cropland-share tile (gray 0-255 plus alpha, as `cropland.py --resampling share` writes) as a palette PNG.
+
+    Palette index 0 is nodata (tRNS alpha 0). Index k + 1 is share level k of 2^depth - 1 levels, and its
+    red value is round(k * 255 / top), so the red channel is the share on a 0-255 scale whatever the depth.
+    Any share above 0 keeps at least level 1, so sparse cropland does not disappear at coarse zooms.
+    Only the palette entries a tile uses are written.
+    """
+    rgba = decode_rgba(data)
+    gray, alpha = rgba[..., 0].astype(np.int32), rgba[..., 3]
+    top = 2**depth - 2
+    level = np.rint(gray / 255 * top).astype(np.int32)
+    level = np.where(gray > 0, np.maximum(level, 1), 0)
+    index = np.where(alpha == 0, 0, level + 1).astype(np.uint8)
+    used = int(index.max()) + 1
+    palette = np.zeros((used, 3), dtype=np.uint8)
+    for k in range(1, used):
+        palette[k, 0] = int(round((k - 1) * 255 / top))
+    palette[0] = NODATA_KEY
+    height, width = index.shape
+    if depth == 8:
+        rows = index
+    else:
+        per = 8 // depth
+        grouped = index.reshape(height, width // per, per).astype(np.uint8)
+        rows = np.zeros((height, width // per), dtype=np.uint8)
+        for i in range(per):
+            rows |= grouped[..., i] << (8 - depth * (i + 1))
+    return _png(rows, depth, 3, [(b"PLTE", palette.tobytes()), (b"tRNS", b"\x00")])
+
+
+def share_values(data: bytes) -> np.ndarray:
+    """Red value of each pixel (share on a 0-255 scale) and -1 for nodata, from any share PNG."""
+    rgba = decode_rgba(data)
+    return np.where(rgba[..., 3] == 0, -1, rgba[..., 0].astype(np.int32))
+
+
 ENCODINGS: dict[str, Callable[[np.ndarray], bytes]] = {
     "gray-alpha": encode_gray_alpha,
     "rgb-r1": lambda values: _rgb(values, 1),
@@ -734,6 +771,19 @@ def extrapolate(bench: dict, inventory: dict) -> dict:
     return out
 
 
+def command_share(src: Path, dest: Path, depth: int) -> dict:
+    """Rewrite a cropland-share archive (gray) as a palette archive with 2^depth - 1 shades."""
+    get_bytes = file_source(src)
+    header = read_header(get_bytes)
+    metadata = read_metadata(get_bytes, header)
+    metadata.update({"description": f"Palette. Red is the cropland share on a 0-255 scale in {2**depth - 1} steps, a transparent entry is nodata", "encoding": f"cropland-share-palette-{depth}bit", "version": "3-share-sample"})
+    started = time.time()
+    entries = ((tile_id, share_palette_png(data, depth)) for tile_id, data in tiles_in_order(get_bytes))
+    result = write_tiles(entries, dest, header, metadata)
+    result.update({"depth": depth, "wall_seconds": round(time.time() - started, 2), "peak_memory": peak_memory()})
+    return result
+
+
 def parse_box(text: str) -> tuple[float, float, float, float]:
     west, south, east, north = (float(part) for part in text.split(","))
     return west, south, east, north
@@ -768,6 +818,10 @@ def main() -> None:
     verify.add_argument("--b", type=Path, required=True)
     verify.add_argument("--encoding", choices=sorted(ENCODINGS), required=True)
     verify.add_argument("--decoder", choices=("gdal", "own"), default="gdal")
+    share = commands.add_parser("share")
+    share.add_argument("--src", type=Path, required=True)
+    share.add_argument("--dest", type=Path, required=True)
+    share.add_argument("--depth", type=int, choices=(4, 8), required=True)
     bench = commands.add_parser("bench")
     bench.add_argument("--src", type=Path, required=True)
     bench.add_argument("--encoding", choices=sorted(ENCODINGS), action="append", required=True)
@@ -785,6 +839,8 @@ def main() -> None:
         result = command_transcode(args.src, args.dest, args.encoding, args.version, args.tile_size)
     elif args.command == "verify":
         result = compare(args.a, args.b, args.encoding, args.decoder)
+    elif args.command == "share":
+        result = command_share(args.src, args.dest, args.depth)
     else:
         result = command_bench(args.src, args.encoding, args.rows)
     print(json.dumps(result, indent=2))

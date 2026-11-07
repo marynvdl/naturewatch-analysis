@@ -488,6 +488,27 @@ The differences under `nearest` are at texel boundaries (about as many lost as g
 
 Prices are list prices as I read them on 7 November 2026; check them before enabling anything.
 
+### Graded display like Global Forest Watch (local comparison, 7 November 2026)
+
+Question: can cropland be drawn with opacity that follows how much of a cell is cropland, as Global Forest Watch does for treeloss? GFW says that below zoom 13 loss pixels are shaded by the density of loss at 30 m, and that shading is uniform from zoom 13. v3 as planned cannot do this: it stores yes or no, and `q3` throws the share away when it builds the coarse zooms.
+
+What was built (laptop, nothing in the cloud, nothing committed under `data/`): two 1° windows, Zakouma (22.1–23.1°E, 10–11°N) and Swartland (18.3–19.3°E, 32.8–33.8°S), from sprout tiles `20N_020E` and `30S_010E` (8.6 MB read). For each window: the planned v3 tiles (`q3`, `palette-r1`), and share tiles (`cropland.py --resampling share`, the task 04 average-up pyramid) rewritten by `transcode.py share` as palette PNGs. Index 0 is nodata, the red channel is the share on a 0–255 scale, in 15 steps (4-bit palette) or 255 steps (8-bit palette). Any share above 0 keeps at least the faintest step, so sparse cropland does not vanish. A local copy of the recipe with `resampling: share` was used; the repo recipe is unchanged.
+
+| Window | Planned class tiles (palette) | Share, 15 steps | Share, 255 steps |
+| --- | --- | --- | --- |
+| Zakouma, 220 tiles | 155,308 B | 486,501 B (3.1x) | 882,487 B (5.7x) |
+| Swartland, 259 tiles | 423,811 B | 1,344,691 B (3.2x) | 2,303,149 B (5.4x) |
+
+Written at 1.1–2.9 s per window. Share to palette: nodata is exact; 15 steps are within 17 of 255 (7%), 255 steps within 1; 0 cropland pixels fell to 0 in either. Safari safety is the same as the class palette: palette PNG, red channel, no gray.
+
+Paint (`tiles/v3_check/shade.html`, Mapbox GL JS 3.34.1, nearest, the app's orange): `raster-color` interpolates `raster-value` to an orange whose opacity is 0.2 + 0.75 × √share, with 0 transparent. That is one layer below zoom 12 and a second, solid layer from zoom 12 up (`maxzoom` and `minzoom` on the layers). Zoom-dependent colour inside one layer was not tried. Looked at in Chrome on Zakouma at zooms 6.5, 8 and 10.5, Swartland at 9.3, 11.2 and 12.2, on the Standard monochrome and satellite basemaps (screenshots in `data/tiles/v3/shots/`).
+
+What it looks like. The solid class tiles paint a flat orange mass. The graded panes show where the cropland is dense and where it is broken up by roads, rivers, bush and field edges, and the edge of a cropland area fades instead of ending in a hard line. This is clearest at zoom 8–10; at zoom 12 and above both are solid, as GFW's are. 15 steps and 255 steps could not be told apart on screen at any zoom I looked at. Farmland as dense as Swartland saturates to nearly solid orange with this curve, so the gain there is mostly in the gaps; sparse areas such as Zakouma gain the most. Zoom 6 and below looks almost the same as the solid map, because cropland is a few pixels wide there.
+
+Cost, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
+
+What it changes besides cost. The layer would show a share, not a class, so the info text and legend change, and the colour curve becomes a design choice. Place figures are unaffected, since they come from the sprout.
+
 ### Stage 2 estimate (for approval)
 
 512 px was chosen; the 256 px column is kept for comparison.

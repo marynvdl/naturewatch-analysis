@@ -201,3 +201,18 @@ def test_512_archive_round_trips(tmp_path):
     expected = dict(tc.mosaics(tc.file_source(tmp_path / "v2.pmtiles")))
     for tile_id, data in tc.tiles_in_order(get):
         assert np.array_equal(tc.gdal_values(data, "palette-r1"), expected[tile_id])
+
+
+@pytest.mark.parametrize("depth", [4, 8])
+def test_share_palette_keeps_nodata_and_never_drops_sparse_cropland(depth):
+    gray = np.zeros((256, 256), np.uint8)
+    gray[0, :5] = [1, 2, 60, 128, 255]
+    alpha = np.full((256, 256), 255, np.uint8)
+    alpha[:, 200:] = 0
+    png = tc.share_palette_png(cropland.encode_class_png(gray, alpha), depth)
+    assert colour_type(png) == (depth, 3)
+    out = tc.share_values(png)
+    assert (out[:, 200:] == -1).all() and (out[:, :200] >= 0).all()
+    assert (out[0, :5] > 0).all(), "a share above 0 must stay above 0"
+    assert out[0, 4] == 255 and out[1, 0] == 0
+    assert np.abs(out[0, :5] - gray[0, :5]).max() <= (17 if depth == 4 else 1) + 1
