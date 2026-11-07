@@ -382,7 +382,7 @@ Code: `tiles/transcode.py` (read v2, write a new encoding, compare, benchmark), 
 | --- | --- | --- |
 | Encoding | **Palette PNG, red 1 is cropland** (`palette-r1`): index 0 is RGB 0,0,0, index 1 is RGB 1,0,0, index 2 is nodata with tRNS alpha 0. 1 bit a pixel when a tile has no nodata, 2 bits when it has | Exact in Safari and Chrome through the real map path. **31% smaller than v2** (about 1.95 GB against 2.81 GB). The red channel is 0 or 1 as today, so `classRasterPaint` keeps `raster-color-mix [255, 0, 0, 0]` and task 10 only changes the URL. Fastest to write (0.85 s per 1,000 tiles against 9 s for RGB) |
 | Route | **Transcode v2**, no COG rebuild | Every tile keeps its pixels (checks below). One spot VM in `europe-west1` reads the 2.8 GB archive inside the region, so no egress. About $0.10 |
-| Tile size | **Decision for you: 256 (as the task says) or 512.** I recommend 512 | 512 px tiles come from the same transcode (a 512 tile at zoom z is the four v2 tiles at z + 1), not a rebuild. With Chrome's request queue (below) they halve the time to load a view and cut a pan by about 4. They change the tile ids and the zoom range (0 to 11), so stage 2's "same tile ids" check becomes "every v2 tile is a quarter of one v3 tile", and task 10 sets `tileSize: 512` and `maxzoom: 11` |
+| Tile size | **512 px**, chosen 7 November 2026 | 512 px tiles come from the same transcode (a 512 tile at zoom z is the four v2 tiles at z + 1), not a rebuild. With Chrome's request queue (below) they halve the time to load a view and cut a pan by about 4. They change the tile ids and the zoom range (0 to 11), so stage 2's "same tile ids" check becomes "every v2 tile is a quarter of one v3 tile", and task 10 sets `tileSize: 512` and `maxzoom: 11` |
 | Cache header | `Cache-Control: public, max-age=31536000, immutable` on the v3 object | The path is versioned. Free. Helps a repeat visit. It does not fix the slow first load (measured below) |
 | CORS | No change | No preflight in Chrome or Safari: a single `Range` is a safelisted header |
 | `raster-resampling` | Keep `nearest` | `linear` adds blended colours at nodata edges and tile seams (below) |
@@ -490,7 +490,9 @@ Prices are list prices as I read them on 7 November 2026; check them before enab
 
 ### Stage 2 estimate (for approval)
 
-| | 256 px palette | 512 px palette |
+512 px was chosen; the 256 px column is kept for comparison.
+
+| | 256 px palette | 512 px palette (chosen) |
 | --- | --- | --- |
 | Where | one spot `e2-standard-2`, `europe-west1`, Batch, 30 GB disk | same |
 | Read | v2 archive 2.81 GB inside the region | same |
