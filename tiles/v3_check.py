@@ -157,6 +157,9 @@ class Handler(ByteRangeHandler):
             self.path = "/" + "/".join(parts[1:])
             self.directory = str(MAPBOX_JS)
             super().do_GET()
+        elif path.endswith("/mapbox-gl-pmtiles-provider.js"):
+            # Mapbox GL JS 3.23+ loads this from TILE_PROVIDER_URLS, a path on the same origin.
+            self._send(200, (DATA / "vendor" / "pmtiles-provider.js").read_bytes(), "text/javascript")
         elif parts[0] == "slow" and len(parts) == 3:
             time.sleep(int(parts[1]) / 1000)
             self.path = "/" + parts[2]
