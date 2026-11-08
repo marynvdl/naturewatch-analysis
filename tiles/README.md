@@ -527,7 +527,7 @@ Recipe `cookbook/recipes/cropland-2024-v3.yaml` (same seed and sprout as v2). Pa
 | Tile ids vs v2 | every v3 tile has v2 tiles under it; every v2 tile at zoom 1 and up sits in a v3 tile (1,275,734 and 5,084,648) |
 | Nodata vs v2 | 1,275,734 tiles, 0 pixels wrong |
 | Sprout sample | 16 zoom-8 roots, 1,360 tiles byte-identical. Opacity error on 15,835,407 graded cells: mean 1.2 points, worst 23.3 |
-| Looked at | Chrome, `preview.html`, v2 live against this archive: Zakouma, Swartland, Sahel, Kazakhstan, Iowa, Punjab. Maryn: v3 looks really good |
+| Looked at | Chrome and Safari on macOS, `preview.html`, v2 live against this archive: Zakouma, Swartland, Sahel, Kazakhstan, Iowa, Punjab. Maryn: v3 looks really good. Safari draws v3 cleanly; v2 still shows the pixelated artefact |
 | Cost | about $1–2 (pilot + shards + merge + verify). Storage about $0.07 a month. Copy to the public bucket inside the region, no egress |
 | Virtual machines left running | none |
 | Scratch | shards kept at `gs://nature-watch-bucket/scratch/tiles/cropland-2024-v3/` until deleted by hand |
