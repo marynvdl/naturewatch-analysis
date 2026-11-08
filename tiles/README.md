@@ -505,7 +505,36 @@ Paint (`tiles/v3_check/shade.html`, Mapbox GL JS 3.34.1, nearest, the app's oran
 
 What it looks like. The solid class tiles paint a flat orange mass. The graded panes show where the cropland is dense and where it is broken up by roads, rivers, bush and field edges, and the edge of a cropland area fades instead of ending in a hard line. This is clearest at zoom 8–10; at zoom 12 and above both are solid, as GFW's are. 15 steps and 255 steps could not be told apart on screen at any zoom I looked at. Farmland as dense as Swartland saturates to nearly solid orange with this curve, so the gain there is mostly in the gaps; sparse areas such as Zakouma gain the most. Zoom 6 and below looks almost the same as the solid map, because cropland is a few pixels wide there.
 
-Cost, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
+Cost, first pass, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. The next section brings that down to about 3.4 GB. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
+
+#### Cutting the share tiles down (8 November 2026)
+
+3x was the cost of storing what the map never uses. Where the bytes are, in the 15-step archives: zoom 12 is 62% (302 of 486 KB at Zakouma, 824 of 1,344 KB at Swartland), zoom 11 a further 24%. Levers tried on the same two windows, each one added to the last:
+
+| Lever | Zakouma | Swartland | Lossless? |
+| --- | --- | --- | --- |
+| 15 steps as built | 3.13x | 3.17x | |
+| PNG row filters (best of none, sub, up, paeth) | 3.13x | 3.17x | no gain on palette indices, not used |
+| **Top zoom stored solid (2 shades, from share 0.5)** | 1.94x | 2.01x | yes: the map draws zoom 12 solid anyway |
+| **Shades spaced evenly in the square root of the share, 8 shades** | **1.73x** | **1.77x** | near: see below |
+| 6 shades | 1.65x | 1.68x | |
+| 3 shades | 1.34x | 1.36x | no: visible steps |
+| 8 shades and drop share under 3% | 1.70x | 1.75x | not worth it |
+
+Why square-root spacing: the opacity curve is 0.2 + 0.75 × √share, so equal steps in √share are equal steps in opacity. 15 evenly spaced shares wasted steps at the dense end and were too coarse at the sparse end. Opacity error against the unquantised share, below zoom 12 (`transcode.py share --steps N --curve sqrt --solid-zoom 12`):
+
+| Shades | Mean error | 95th percentile | Worst |
+| --- | --- | --- | --- |
+| 15, linear | 0.5–0.9 points | 2.3–3.7 | 15.2 |
+| 8, √ | 0.8–1.3 | 4.5–4.9 | 5.8 |
+| 6, √ | 1.2–1.9 | 6.3–6.8 | 10.2 |
+| 3, √ | 3.1–5.3 | 17–21 | 32.9 |
+
+The 8-shade √ version is more accurate in the worst case than the 15-shade linear one, and 40% smaller. At the screenshot scale I could not tell 15, 8, 6 and 3 shades apart (Zakouma zoom 7.6, 8.6, 9.2 and 11; Swartland 9.3); the error numbers are the evidence.
+
+Extrapolated to the 1.95 GB class archive: about 3.4 GB at 8 shades (3.2 GB at 6, 2.6 GB at 3). An upper estimate, for the reason above. The archive's own pyramid, not this sample's, decides the real figure. With 512 px tiles the top zoom is 11, so `--solid-zoom 11` (the tile that holds zoom 12 pixels); the size shape is the same.
+
+Still open and not tried: solid at zoom 11 as well (one more zoom saved, but the map would show no density from map zoom 11 up; GFW keeps it to 13). Compressing tile bodies again in the archive would not help: a PNG tile is already deflated.
 
 What it changes besides cost. The layer would show a share, not a class, so the info text and legend change, and the colour curve becomes a design choice. Place figures are unaffected, since they come from the sprout.
 

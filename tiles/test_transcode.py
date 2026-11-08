@@ -203,16 +203,28 @@ def test_512_archive_round_trips(tmp_path):
         assert np.array_equal(tc.gdal_values(data, "palette-r1"), expected[tile_id])
 
 
-@pytest.mark.parametrize("depth", [4, 8])
-def test_share_palette_keeps_nodata_and_never_drops_sparse_cropland(depth):
+@pytest.mark.parametrize("steps,curve,bits,error", [(14, "linear", 4, 18), (254, "linear", 8, 2), (7, "sqrt", 4, 40), (2, "sqrt", 2, 120)])
+def test_share_palette_keeps_nodata_and_never_drops_sparse_cropland(steps, curve, bits, error):
     gray = np.zeros((256, 256), np.uint8)
     gray[0, :5] = [1, 2, 60, 128, 255]
     alpha = np.full((256, 256), 255, np.uint8)
     alpha[:, 200:] = 0
-    png = tc.share_palette_png(cropland.encode_class_png(gray, alpha), depth)
-    assert colour_type(png) == (depth, 3)
+    png = tc.share_palette_png(cropland.encode_class_png(gray, alpha), steps, curve)
+    assert colour_type(png) == (bits, 3)
     out = tc.share_values(png)
     assert (out[:, 200:] == -1).all() and (out[:, :200] >= 0).all()
     assert (out[0, :5] > 0).all(), "a share above 0 must stay above 0"
     assert out[0, 4] == 255 and out[1, 0] == 0
-    assert np.abs(out[0, :5] - gray[0, :5]).max() <= (17 if depth == 4 else 1) + 1
+    assert np.abs(out[0, 2:5] - gray[0, 2:5]).max() <= error
+
+
+def test_share_palette_solid_is_two_shades_and_smaller():
+    rng = np.random.default_rng(1)
+    gray = (rng.random((256, 256)) ** 3 * 255).astype(np.uint8)
+    alpha = np.full((256, 256), 255, np.uint8)
+    data = cropland.encode_class_png(gray, alpha)
+    solid = tc.share_palette_png(data, solid=True)
+    assert colour_type(solid) == (2, 3)
+    assert set(np.unique(tc.share_values(solid))) <= {0, 255}
+    assert (tc.share_values(solid) == 255).sum() == (gray >= 128).sum()
+    assert len(solid) < len(tc.share_palette_png(data, 14))

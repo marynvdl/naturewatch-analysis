@@ -118,35 +118,47 @@ def _palette(values: np.ndarray, scale: int) -> bytes:
     return _png(rows, 1, 3, [(b"PLTE", bytes([0, 0, 0, scale, 0, 0]))])
 
 
-def share_palette_png(data: bytes, depth: int) -> bytes:
+def _pack(index: np.ndarray, depth: int) -> np.ndarray:
+    height, width = index.shape
+    if depth == 8:
+        return index
+    per = 8 // depth
+    grouped = index.reshape(height, width // per, per).astype(np.uint8)
+    rows = np.zeros((height, width // per), dtype=np.uint8)
+    for i in range(per):
+        rows |= grouped[..., i] << (8 - depth * (i + 1))
+    return rows
+
+
+def share_palette_png(data: bytes, steps: int = 14, curve: str = "linear", solid: bool = False) -> bytes:
     """A cropland-share tile (gray 0-255 plus alpha, as `cropland.py --resampling share` writes) as a palette PNG.
 
-    Palette index 0 is nodata (tRNS alpha 0). Index k + 1 is share level k of 2^depth - 1 levels, and its
-    red value is round(k * 255 / top), so the red channel is the share on a 0-255 scale whatever the depth.
-    Any share above 0 keeps at least level 1, so sparse cropland does not disappear at coarse zooms.
-    Only the palette entries a tile uses are written.
+    Palette index 0 is nodata (tRNS alpha 0). Index k + 1 is shade k, k = 0..steps, and its red value is the
+    share on a 0-255 scale: 255 * (k / steps) for curve "linear", 255 * (k / steps)^2 for "sqrt", which spaces
+    the shades evenly in the square root of the share, so they are evenly spaced in opacity when opacity follows
+    the square root. Up to 2, 14 or 254 steps fit 2, 4 or 8 bits. Any share above 0 keeps at least shade 1, so sparse
+    cropland does not disappear at coarse zooms. Only the palette entries a tile uses are written.
+
+    solid: two shades, share below 0.5 is 0 and from 0.5 is 255. For the zoom where the map draws no shading.
     """
     rgba = decode_rgba(data)
     gray, alpha = rgba[..., 0].astype(np.int32), rgba[..., 3]
-    top = 2**depth - 2
-    level = np.rint(gray / 255 * top).astype(np.int32)
-    level = np.where(gray > 0, np.maximum(level, 1), 0)
+    if solid:
+        steps, curve = 1, "linear"
+        level = (gray >= 128).astype(np.int32)
+    else:
+        x = np.sqrt(gray / 255) if curve == "sqrt" else gray / 255
+        level = np.rint(x * steps).astype(np.int32)
+        level = np.where(gray > 0, np.maximum(level, 1), 0)
+    depth = 2 if steps + 2 <= 4 else 4 if steps + 2 <= 16 else 8
     index = np.where(alpha == 0, 0, level + 1).astype(np.uint8)
     used = int(index.max()) + 1
     palette = np.zeros((used, 3), dtype=np.uint8)
     for k in range(1, used):
-        palette[k, 0] = int(round((k - 1) * 255 / top))
+        share = (k - 1) / steps
+        palette[k, 0] = int(round((share**2 if curve == "sqrt" else share) * 255))
     palette[0] = NODATA_KEY
-    height, width = index.shape
-    if depth == 8:
-        rows = index
-    else:
-        per = 8 // depth
-        grouped = index.reshape(height, width // per, per).astype(np.uint8)
-        rows = np.zeros((height, width // per), dtype=np.uint8)
-        for i in range(per):
-            rows |= grouped[..., i] << (8 - depth * (i + 1))
-    return _png(rows, depth, 3, [(b"PLTE", palette.tobytes()), (b"tRNS", b"\x00")])
+    return _png(_pack(index, depth), depth, 3, [(b"PLTE", palette.tobytes()), (b"tRNS", b"\x00")])
 
 
 def share_values(data: bytes) -> np.ndarray:
@@ -771,16 +783,23 @@ def extrapolate(bench: dict, inventory: dict) -> dict:
     return out
 
 
-def command_share(src: Path, dest: Path, depth: int) -> dict:
-    """Rewrite a cropland-share archive (gray) as a palette archive with 2^depth - 1 shades."""
+def command_share(src: Path, dest: Path, steps: int, curve: str, solid_zoom: int | None) -> dict:
+    """Rewrite a cropland-share archive (gray) as a palette archive with `steps` + 1 shades.
+
+    From solid_zoom up the tiles are two-shade (see share_palette_png solid), the zoom the map draws solid.
+    Zooms below carry the shades. The paint reads the settings from the archive metadata.
+    """
     get_bytes = file_source(src)
     header = read_header(get_bytes)
     metadata = read_metadata(get_bytes, header)
-    metadata.update({"description": f"Palette. Red is the cropland share on a 0-255 scale in {2**depth - 1} steps, a transparent entry is nodata", "encoding": f"cropland-share-palette-{depth}bit", "version": "3-share-sample"})
+    metadata.update({
+        "description": f"Palette. Red is the cropland share on a 0-255 scale, {steps + 1} shades ({curve}), from zoom {solid_zoom} two shades. A transparent entry is nodata",
+        "encoding": "cropland-share-palette", "share_steps": steps, "share_curve": curve, "solid_zoom": solid_zoom, "version": "3-share-sample"})
     started = time.time()
-    entries = ((tile_id, share_palette_png(data, depth)) for tile_id, data in tiles_in_order(get_bytes))
+    entries = ((tile_id, share_palette_png(data, steps, curve, solid=solid_zoom is not None and tileid_to_zxy(tile_id)[0] >= solid_zoom))
+               for tile_id, data in tiles_in_order(get_bytes))
     result = write_tiles(entries, dest, header, metadata)
-    result.update({"depth": depth, "wall_seconds": round(time.time() - started, 2), "peak_memory": peak_memory()})
+    result.update({"steps": steps, "curve": curve, "solid_zoom": solid_zoom, "wall_seconds": round(time.time() - started, 2), "peak_memory": peak_memory()})
     return result
 
 
@@ -821,7 +840,9 @@ def main() -> None:
     share = commands.add_parser("share")
     share.add_argument("--src", type=Path, required=True)
     share.add_argument("--dest", type=Path, required=True)
-    share.add_argument("--depth", type=int, choices=(4, 8), required=True)
+    share.add_argument("--steps", type=int, required=True, help="shades above zero, 1 to 254. Up to 2 fit 2 bits, up to 14 fit 4 bits")
+    share.add_argument("--curve", choices=("linear", "sqrt"), default="sqrt")
+    share.add_argument("--solid-zoom", type=int, default=None, help="two shades from this tile zoom up")
     bench = commands.add_parser("bench")
     bench.add_argument("--src", type=Path, required=True)
     bench.add_argument("--encoding", choices=sorted(ENCODINGS), action="append", required=True)
@@ -840,7 +861,7 @@ def main() -> None:
     elif args.command == "verify":
         result = compare(args.a, args.b, args.encoding, args.decoder)
     elif args.command == "share":
-        result = command_share(args.src, args.dest, args.depth)
+        result = command_share(args.src, args.dest, args.steps, args.curve, args.solid_zoom)
     else:
         result = command_bench(args.src, args.encoding, args.rows)
     print(json.dumps(result, indent=2))
