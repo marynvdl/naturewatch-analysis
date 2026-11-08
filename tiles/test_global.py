@@ -19,6 +19,7 @@ import global_cropland as gc  # noqa: E402
 import pyramid  # noqa: E402
 
 RECIPE = yaml.safe_load((Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v2.yaml").read_text())
+SHARE_RECIPE = yaml.safe_load((Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v3.yaml").read_text())
 TOP = 8
 PIXEL = 0.05
 
@@ -93,10 +94,10 @@ def test_refuses_an_unset_resampling():
         gc.require_contract(recipe)
 
 
-def test_refuses_a_resampling_that_is_not_a_class_method():
+def test_refuses_share_without_its_settings():
     recipe = json.loads(json.dumps(RECIPE))
     recipe["tiles"]["resampling"] = "share"
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="cropland-2024-v3.yaml"):
         gc.require_contract(recipe)
 
 
@@ -281,3 +282,161 @@ def test_submit_without_approval_does_not_call_gcloud(monkeypatch, tmp_path, cap
     gc.command_submit(Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v2.yaml", None, False, False)
     assert called == []
     assert "not submitted" in capsys.readouterr().out
+
+
+# ---- version 3: share tiles (task 09b) ----------------------------------------------
+
+SHARE_TOP = TOP - 1  # 512 px archive zoom; the 256 px reference stops at TOP
+SOLID = SHARE_TOP - 1
+
+
+def share_test_recipe(sprout: Path) -> dict:
+    recipe = json.loads(json.dumps(SHARE_RECIPE))
+    recipe["sprout"]["tiles_path"] = str(sprout)
+    recipe["tiles"]["max_zoom"] = SHARE_TOP
+    recipe["tiles"]["solid_zoom"] = SOLID
+    return recipe
+
+
+def test_the_v3_recipe_is_its_own_catalog_entry_over_the_same_seed_and_sprout():
+    recipe = SHARE_RECIPE
+    contract = gc.require_contract(recipe)
+    assert recipe["id"] == "cropland-2024-v3" != RECIPE["id"]
+    assert gc.scratch_prefix(recipe) != gc.scratch_prefix(RECIPE)
+    assert recipe["seed"] == RECIPE["seed"] and recipe["sprout"] == RECIPE["sprout"]
+    assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles"
+    assert (contract["tile_size"], contract["max_zoom"], contract["share_steps"], contract["solid_zoom"]) == (512, 11, 7, 11)
+    assert contract["share_curve"] == "sqrt" and contract["resampling"] == "share"
+    assert gc.make_plan(recipe) == gc.make_plan(RECIPE)
+
+
+def test_share_settings_change_the_shard_hash():
+    recipe = SHARE_RECIPE
+    base = pyramid.config_digest(gc.config_of(recipe, gc.require_contract(recipe)))
+    for key, value in (("share_steps", 5), ("share_curve", "linear"), ("solid_zoom", 10)):
+        changed = json.loads(json.dumps(recipe))
+        changed["tiles"][key] = value
+        assert pyramid.config_digest(gc.config_of(changed, gc.require_contract(changed))) != base, key
+    assert "tile_size" in gc.config_of(recipe, gc.require_contract(recipe))
+
+
+def test_class_recipes_are_still_256_px():
+    recipe = json.loads(json.dumps(RECIPE))
+    recipe["tiles"]["tile_size"] = 512
+    with pytest.raises(ValueError, match="share only"):
+        cropland.tile_contract(recipe)
+
+
+def mosaic(tiles: dict, z: int, x: int, y: int) -> np.ndarray:
+    """The 512 px values of tile (z, x, y) from the four 256 px tiles at z + 1. -1 is nodata, and absent."""
+    import transcode
+
+    out = np.full((512, 512), -1, dtype=np.int32)
+    for dy in (0, 1):
+        for dx in (0, 1):
+            data = tiles.get((z + 1, x * 2 + dx, y * 2 + dy))
+            if data is not None:
+                out[dy * 256 : (dy + 1) * 256, dx * 256 : (dx + 1) * 256] = transcode.share_values(data)
+    return out
+
+
+def test_share_shards_equal_the_share_build_then_the_transcode_tile_for_tile(sprout, tmp_path, monkeypatch):
+    import transcode
+
+    # cropland.py's streaming path weights every valid cell 1 above the top zoom, so it differs from the weighted
+    # mean (the spec, and the in-memory path) next to nodata. Compare against the in-memory path.
+    monkeypatch.setattr(cropland, "STREAMING_Z12_TILES", 10**9)
+
+    recipe = share_test_recipe(sprout)
+    stats = gc.command_local(recipe, str(sprout), tmp_path / "run", SHARE_TOP, None)
+    assert stats["shards"] >= 3
+    mine = tiles_of(tmp_path / "run" / "cropland.pmtiles")
+
+    names = [path.name for path in sorted(sprout.glob("*.tif"))]
+    vrt = tmp_path / "all.vrt"
+    gdal.BuildVRT(str(vrt), [str(sprout / name) for name in names], srcNodata=255, VRTNodata=255).FlushCache()
+    reference_recipe = small_recipe(sprout)
+    reference_recipe["tiles"]["resampling"] = "share"
+    reference_path = tmp_path / "share.pmtiles"
+    cropland.build_pmtiles(vrt, reference_path, reference_recipe)
+    palette_path = tmp_path / "palette.pmtiles"
+    transcode.command_share(reference_path, palette_path, 7, "sqrt", SOLID + 1)
+    reference = tiles_of(palette_path)
+
+    assert set(mine) == {(z - 1, x // 2, y // 2) for z, x, y in reference if z >= 1}
+    assert [key for key in mine if key[0] == 0], "zoom 0 tile is missing"
+    for (z, x, y), data in mine.items():
+        assert np.array_equal(transcode.share_values(data), mosaic(reference, z, x, y)), (z, x, y)
+
+
+def test_share_tiles_are_512_px_palette_with_eight_shades_and_solid_at_the_top(sprout, tmp_path):
+    import transcode
+
+    gc.command_local(share_test_recipe(sprout), str(sprout), tmp_path / "run", SHARE_TOP, None)
+    tiles = tiles_of(tmp_path / "run" / "cropland.pmtiles")
+    wanted = {(z, 0) for z in range(SHARE_TOP + 1)}
+    for (z, x, y), data in tiles.items():
+        rgba = transcode.decode_rgba(data)
+        assert rgba.shape[:2] == (512, 512)
+        assert data[25] == 3, "palette colour type"  # IHDR colour type byte
+        red = np.unique(rgba[..., 0][rgba[..., 3] > 0])
+        allowed = {0, 255} if z >= SOLID else {round(255 * (k / 7) ** 2) for k in range(8)}
+        assert set(red.tolist()) <= allowed, (z, x, y)
+        wanted.discard((z, 1))
+    assert any(0 < r < 255 for key, data in tiles.items() if key[0] < SOLID for r in np.unique(transcode.decode_rgba(data)[..., 0]))
+
+
+def test_share_metadata_records_the_settings(sprout, tmp_path):
+    from pmtiles.reader import MmapSource, Reader
+
+    gc.command_local(share_test_recipe(sprout), str(sprout), tmp_path / "run", SHARE_TOP, None)
+    with open(tmp_path / "run" / "cropland.pmtiles", "rb") as handle:
+        metadata = Reader(MmapSource(handle)).metadata()
+    assert (metadata["share_steps"], metadata["share_curve"], metadata["solid_zoom"], metadata["tile_size"]) == (7, "sqrt", SOLID, 512)
+    assert metadata["encoding"] == "cropland-share-palette"
+
+
+def test_share_verify_against_the_sprout_agrees_and_catches_a_change(sprout, tmp_path):
+    recipe = share_test_recipe(sprout)
+    names = ["20S_020E", "20S_030E", "30S_020E"]
+    vrt = tmp_path / "sprout.vrt"
+    gdal.BuildVRT(str(vrt), [str(sprout / f"{n}.tif") for n in names], srcNodata=255, VRTNodata=255).FlushCache()
+    recipe["sprout"]["path"] = str(vrt)
+    plan = gc.make_plan(recipe, set(names))
+    gc.command_local(recipe, str(sprout), tmp_path / "run", SHARE_TOP, None)
+    archive = tmp_path / "run" / "cropland.pmtiles"
+    contract = gc.require_contract(recipe)
+    assert gc.verify_against_sprout(recipe, contract, archive, plan, 4, SHARE_TOP, root_zoom=5)["tiles_compared"] > 0
+    other = {**contract, "share_steps": 5}
+    with pytest.raises(pyramid.MergeError, match="disagrees"):
+        gc.verify_against_sprout(recipe, other, archive, plan, 8, SHARE_TOP, root_zoom=5)
+
+
+def test_a_share_shard_is_rebuilt_when_its_root_file_is_missing(sprout, tmp_path, capsys):
+    recipe = share_test_recipe(sprout)
+    plan = gc.make_plan(recipe, {"20S_020E"})
+    scratch = str(tmp_path / "scratch")
+    gc.run_shard(recipe, 0, tmp_path / "w", scratch, str(sprout), plan, SHARE_TOP)
+    root = Path(gc.root_path(scratch, plan[0]))
+    assert root.exists()
+    root.unlink()
+    capsys.readouterr()
+    gc.run_shard(recipe, 0, tmp_path / "w", scratch, str(sprout), plan, SHARE_TOP)
+    assert "is done" not in capsys.readouterr().out and root.exists()
+
+
+def test_share_submit_without_approval_writes_the_v3_recipe_and_calls_nothing(monkeypatch, tmp_path, capsys):
+    called = []
+    monkeypatch.setattr(cropland, "gcloud", lambda args: called.append(args))
+    monkeypatch.setattr(cropland, "upload_with_gcloud", lambda *a: called.append(a))
+    monkeypatch.setattr(gc, "ROOT", tmp_path)
+    work = tmp_path / "data" / "tiles" / "cropland-2024-v3" / "global"
+    work.mkdir(parents=True)
+    (work / "pmtiles-3.8.1-py3-none-any.whl").write_bytes(b"")
+    path = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v3.yaml"
+    gc.command_submit(path, 0, False, False)
+    assert called == []
+    assert "not submitted" in capsys.readouterr().out
+    sent = json.loads((work / "recipe.json").read_text())
+    assert sent["tiles"]["resampling"] == "share" and sent["tiles"]["path"].endswith("/v3/cropland.pmtiles")
+    assert "transcode.py" in gc.CODE_FILES

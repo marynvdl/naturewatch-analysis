@@ -164,12 +164,18 @@ def build_shard(
     dest: Path,
     bounds: Bounds,
     metadata: dict,
+    root_sink: list | None = None,
 ) -> dict:
-    """Build one shard to `dest` and return its record. An empty shard writes no file."""
+    """Build one shard to `dest` and return its record. An empty shard writes no file.
+
+    root_sink: when given, the shard root's array (None if empty) is appended to it, for a merge that needs it unquantised.
+    """
     started = time.perf_counter()
     entries: list[Entry] = []
     root = (shard["z"], shard["x"], shard["y"])
-    build_subtree(root, top_zoom, render, reduce, encode, entries)
+    root_values = build_subtree(root, top_zoom, render, reduce, encode, entries)
+    if root_sink is not None:
+        root_sink.append(root_values)
     entries.sort(key=lambda entry: entry[0])
     by_zoom: dict[int, int] = {}
     for tile_id, _data in entries:

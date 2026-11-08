@@ -49,6 +49,7 @@ SERVICE_ACCOUNT = "637146989512-compute@developer.gserviceaccount.com"
 SCRATCH = "gs://nature-watch-bucket/scratch/tiles/cropland-2024/"
 BATCH_ENV = "NATUREWATCH_TILES_BATCH"
 TILE_SIZE = 256
+SHARE_TILE_SIZE = 512  # share tiles only (task 09b); a 512 px tile at zoom z is four 256 px tiles at zoom z + 1
 EARTH_RADIUS = 6378137.0
 
 
@@ -83,9 +84,11 @@ def tile_contract(recipe: dict, resampling: str | None = None, threshold: float 
     problems = []
     if scheme not in ("xyz", "pmtiles"):
         problems.append("tiles.scheme must be xyz or pmtiles")
-    if int(tiles.get("tile_size", TILE_SIZE)) != TILE_SIZE:
-        problems.append(f"tiles.tile_size must be {TILE_SIZE}")
     chosen = tiles.get("resampling")
+    tile_size = int(tiles.get("tile_size", TILE_SIZE))
+    share_sizes = (TILE_SIZE, SHARE_TILE_SIZE)
+    if tile_size != TILE_SIZE and not (scheme == "pmtiles" and (resampling or chosen) == "share" and tile_size in share_sizes):
+        problems.append(f"tiles.tile_size must be {TILE_SIZE} ({SHARE_TILE_SIZE} is allowed for share only)")
     if scheme == "xyz":
         if chosen != "max":
             problems.append("tiles.resampling must be max")
@@ -138,6 +141,7 @@ def tile_contract(recipe: dict, resampling: str | None = None, threshold: float 
         "resampling": chosen,
         "threshold": float(chosen_threshold) if chosen == "fraction" else None,
         "tile_encoding": tile_encoding,
+        "tile_size": tile_size,
     }
 
 
@@ -373,7 +377,7 @@ def build_pyramid(source: Path, bounds: tuple[float, float, float, float], contr
 # ---- Average then threshold: carry the cropland share, decide once ----------
 
 
-def fraction_tile(source: Path, zoom: int, x: int, y: int, nodata: int) -> np.ndarray | None:
+def fraction_tile(source: Path, zoom: int, x: int, y: int, nodata: int, tile_size: int = TILE_SIZE) -> np.ndarray | None:
     """Share of valid source pixels under each tile cell that are cropland, 0 to 1.
 
     Nodata cells are -1. None when the whole tile is nodata. GDAL average resampling
@@ -384,8 +388,8 @@ def fraction_tile(source: Path, zoom: int, x: int, y: int, nodata: int) -> np.nd
         str(source),
         format="MEM",
         outputBounds=tile_bounds_3857(zoom, x, y),
-        width=TILE_SIZE,
-        height=TILE_SIZE,
+        width=tile_size,
+        height=tile_size,
         dstSRS="EPSG:3857",
         resampleAlg="average",
         outputType=gdal.GDT_Float32,
@@ -399,21 +403,21 @@ def fraction_tile(source: Path, zoom: int, x: int, y: int, nodata: int) -> np.nd
     return share
 
 
-def reduce_fraction(children: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray] | None:
+def reduce_fraction(children: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]], tile_size: int = TILE_SIZE) -> tuple[np.ndarray, np.ndarray] | None:
     """Parent share and weight from children. Weight is the count of valid zoom 12 cells.
 
     The parent share is the weighted mean of the child shares, so it equals the share of
     valid zoom 12 cells under the parent, whatever the zoom.
     """
-    share = np.zeros((TILE_SIZE * 2, TILE_SIZE * 2), dtype=np.float64)
-    weight = np.zeros((TILE_SIZE * 2, TILE_SIZE * 2), dtype=np.float64)
+    share = np.zeros((tile_size * 2, tile_size * 2), dtype=np.float64)
+    weight = np.zeros((tile_size * 2, tile_size * 2), dtype=np.float64)
     for (dx, dy), (child_share, child_weight) in children.items():
-        rows = slice(dy * TILE_SIZE, (dy + 1) * TILE_SIZE)
-        cols = slice(dx * TILE_SIZE, (dx + 1) * TILE_SIZE)
+        rows = slice(dy * tile_size, (dy + 1) * tile_size)
+        cols = slice(dx * tile_size, (dx + 1) * tile_size)
         share[rows, cols] = np.where(child_weight > 0, child_share, 0) * child_weight
         weight[rows, cols] = child_weight
-    total = weight.reshape(TILE_SIZE, 2, TILE_SIZE, 2).sum(axis=(1, 3))
-    mixed = share.reshape(TILE_SIZE, 2, TILE_SIZE, 2).sum(axis=(1, 3))
+    total = weight.reshape(tile_size, 2, tile_size, 2).sum(axis=(1, 3))
+    mixed = share.reshape(tile_size, 2, tile_size, 2).sum(axis=(1, 3))
     if not np.any(total > 0):
         return None
     out = np.where(total > 0, mixed / np.where(total > 0, total, 1), -1).astype(np.float32)
@@ -512,12 +516,17 @@ def tile_png(values: np.ndarray) -> bytes:
     return encode_class_png(gray, alpha)
 
 
-def tile_png_share(share: np.ndarray) -> bytes:
-    """Gray 0–255 is cropland share; alpha 0 is nodata."""
+def share_gray_alpha(share: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Gray 0–255 is round(share × 255); alpha 0 is nodata."""
     valid = share >= 0
     gray = np.where(valid, np.clip(np.rint(share * 255), 0, 255), 0).astype(np.uint8)
     alpha = np.where(valid, 255, 0).astype(np.uint8)
-    return encode_class_png(gray, alpha)
+    return gray, alpha
+
+
+def tile_png_share(share: np.ndarray) -> bytes:
+    """Gray 0–255 is cropland share; alpha 0 is nodata."""
+    return encode_class_png(*share_gray_alpha(share))
 
 
 def write_pmtiles(levels: dict[int, dict], dest: Path, contract: dict, bounds: tuple[float, float, float, float]) -> dict:

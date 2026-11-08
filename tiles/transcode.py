@@ -142,7 +142,12 @@ def share_palette_png(data: bytes, steps: int = 14, curve: str = "linear", solid
     solid: two shades, share below 0.5 is 0 and from 0.5 is 255. For the zoom where the map draws no shading.
     """
     rgba = decode_rgba(data)
-    gray, alpha = rgba[..., 0].astype(np.int32), rgba[..., 3]
+    return share_palette_from_gray(rgba[..., 0], rgba[..., 3], steps, curve, solid)
+
+
+def share_palette_from_gray(gray: np.ndarray, alpha: np.ndarray, steps: int = 14, curve: str = "linear", solid: bool = False) -> bytes:
+    """`share_palette_png` from the gray and alpha arrays, without a PNG in between."""
+    gray = gray.astype(np.int32)
     if solid:
         steps, curve = 1, "linear"
         level = (gray >= 128).astype(np.int32)
