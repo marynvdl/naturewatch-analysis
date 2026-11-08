@@ -29,6 +29,7 @@ def test_the_catalog_lists_the_cropland_and_places_recipes():
     loaded = load_recipes()
     assert [name for name, _ in loaded] == [
         "cropland-2024-v2.yaml",
+        "cropland-2024-v3.yaml",
         "cropland-2024.yaml",
         "places-protected-areas.yaml",
     ]
@@ -90,6 +91,18 @@ def tile_sort_key(name):
     lat = int(lat_s[:2]) * (1 if lat_s[2] == "N" else -1)
     lon = int(lon_s[:3]) * (1 if lon_s[3] == "E" else -1)
     return (-lat, lon)
+
+
+def test_the_version_3_recipe_shares_the_seed_and_sprout_and_names_the_share_archive():
+    loaded = dict(load_recipes())
+    v2, v3 = loaded["cropland-2024-v2.yaml"], loaded["cropland-2024-v3.yaml"]
+    assert v3["id"] == "cropland-2024-v3"
+    for key in ("source", "year", "extent", "grid", "seed", "sprout"):
+        assert v3[key] == v2[key], key
+    tiles = v3["tiles"]
+    assert tiles["path"] == "gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles"
+    assert (tiles["scheme"], tiles["tile_size"], tiles["min_zoom"], tiles["max_zoom"]) == ("pmtiles", 512, 0, 11)
+    assert (tiles["resampling"], tiles["share_steps"], tiles["share_curve"], tiles["solid_zoom"]) == ("share", 7, "sqrt", 11)
 
 
 def test_the_global_recipe_names_version_2_and_every_source_tile():

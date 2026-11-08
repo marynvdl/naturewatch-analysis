@@ -11,8 +11,8 @@ The recipe is the catalog and this file does not edit it. The layer maths
   python tiles/global_cropland.py merge  --recipe ...                  (a Batch task)
   python tiles/global_cropland.py local  --recipe ... --sources DIR --work DIR --top-zoom 9
 
-Add --resampling share to any command for the version 3 share archive (task 09b): 512 px palette tiles, zoom 0 to
-11, cropland/2024/v3. The recipe file is not edited; the share settings are in SHARE below.
+A recipe whose tiles.resampling is share (cookbook/recipes/cropland-2024-v3.yaml, task 09b) builds the version 3
+archive: 512 px palette tiles, zoom 0 to 11, cropland/2024/v3. The shades, curve and solid zoom are in the recipe.
 
 `plan` and `local` start nothing billable. `submit` writes the job files and
 prints them; it calls gcloud only with --approved, after the expected cost has
@@ -50,15 +50,7 @@ CODE_VERSION = "1"
 CLASS_RESAMPLINGS = ("max", "q3", "q2", "nearest")
 CACHE_CONTROL = "public, max-age=3600"  # what the version 1 tile objects serve
 CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py")
-# Version 3 (task 09b, option B2). 8 shades spaced in the square root of the share, the top tile solid, 512 px.
-SHARE = {
-    "steps": 7,
-    "curve": "sqrt",
-    "solid_zoom": 11,
-    "tile_size": 512,
-    "max_zoom": 11,
-    "path": "gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles",
-}
+SHARE_TILE_SIZE = cropland.SHARE_TILE_SIZE  # version 3 (task 09b): the recipe sets the shades, the curve and the solid zoom
 SHARD_SHAPE = {
     "machine": "e2-standard-2",
     "cpu_milli": "2000",
@@ -82,28 +74,6 @@ MERGE_SHAPE = {
 # ---- recipe and plan --------------------------------------------------------
 
 
-def share_recipe(recipe: dict) -> dict:
-    """A copy of the recipe whose tiles block is the version 3 share archive. The recipe file is not edited.
-
-    The copy goes to Batch as recipe.json, so the tasks build the same thing. Its id names the scratch folder,
-    so share shards never meet class shards.
-    """
-    out = json.loads(json.dumps(recipe))
-    out["id"] = recipe["id"].removesuffix("-v2") + "-v3-share"
-    tiles = {key: recipe["tiles"][key] for key in ("min_zoom", "scheme")}
-    out["tiles"] = {
-        **tiles,
-        "path": SHARE["path"],
-        "max_zoom": SHARE["max_zoom"],
-        "tile_size": SHARE["tile_size"],
-        "resampling": "share",
-        "share_steps": SHARE["steps"],
-        "share_curve": SHARE["curve"],
-        "solid_zoom": SHARE["solid_zoom"],
-    }
-    return out
-
-
 def is_share(recipe: dict) -> bool:
     return recipe["tiles"].get("resampling") == "share"
 
@@ -117,12 +87,12 @@ def require_contract(recipe: dict) -> dict:
         tiles = recipe["tiles"]
         missing = [key for key in ("share_steps", "share_curve", "solid_zoom") if key not in tiles]
         if missing:
-            raise SystemExit(f"share needs tiles.{', tiles.'.join(missing)}. Use --resampling share")
+            raise SystemExit(f"share needs tiles.{', tiles.'.join(missing)}. Use cookbook/recipes/cropland-2024-v3.yaml")
         contract.update(
             share_steps=int(tiles["share_steps"]), share_curve=tiles["share_curve"], solid_zoom=int(tiles["solid_zoom"])
         )
-        if contract["tile_size"] != SHARE["tile_size"]:
-            raise SystemExit(f"share tiles are {SHARE['tile_size']} px")
+        if contract["tile_size"] != SHARE_TILE_SIZE:
+            raise SystemExit(f"share tiles are {SHARE_TILE_SIZE} px")
         if not 1 <= contract["solid_zoom"] <= contract["max_zoom"]:
             raise SystemExit("solid_zoom must be from 1 to max_zoom")
     elif contract["resampling"] not in CLASS_RESAMPLINGS:
@@ -689,10 +659,8 @@ def job_name(recipe: dict, kind: str, pilot: int | None = None) -> str:
     return f"tiles-{recipe['id']}-{kind}" + (f"-pilot{pilot}" if pilot is not None else "")
 
 
-def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool, share: bool = False) -> None:
+def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool) -> None:
     recipe = cropland.load_recipe(recipe_path)
-    if share:
-        recipe = share_recipe(recipe)
     require_contract(recipe)
     plan = make_plan(recipe)
     prefix = scratch_prefix(recipe)
@@ -778,15 +746,12 @@ def main() -> None:
     parser.add_argument("--sources", help="folder or prefix of sprout COGs, instead of sprout.tiles_path")
     parser.add_argument("--only", help="comma-separated tile names, for a cropped local run")
     parser.add_argument("--top-zoom", type=int)
-    parser.add_argument("--resampling", choices=("share",), help="share: the version 3 graded archive (task 09b), else the recipe's class method")
     args = parser.parse_args()
     recipe = cropland.load_recipe(args.recipe)
-    if args.resampling == "share":
-        recipe = share_recipe(recipe)
     if args.command == "plan":
         command_plan(recipe)
     elif args.command == "submit":
-        command_submit(args.recipe, args.pilot, args.merge, args.approved, args.resampling == "share")
+        command_submit(args.recipe, args.pilot, args.merge, args.approved)
     elif args.command == "local":
         only = set(args.only.split(",")) if args.only else None
         command_local(recipe, args.sources, args.work, args.top_zoom or recipe["tiles"]["max_zoom"], only)

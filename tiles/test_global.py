@@ -19,6 +19,7 @@ import global_cropland as gc  # noqa: E402
 import pyramid  # noqa: E402
 
 RECIPE = yaml.safe_load((Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v2.yaml").read_text())
+SHARE_RECIPE = yaml.safe_load((Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v3.yaml").read_text())
 TOP = 8
 PIXEL = 0.05
 
@@ -96,7 +97,7 @@ def test_refuses_an_unset_resampling():
 def test_refuses_share_without_its_settings():
     recipe = json.loads(json.dumps(RECIPE))
     recipe["tiles"]["resampling"] = "share"
-    with pytest.raises(SystemExit, match="--resampling share"):
+    with pytest.raises(SystemExit, match="cropland-2024-v3.yaml"):
         gc.require_contract(recipe)
 
 
@@ -290,27 +291,27 @@ SOLID = SHARE_TOP - 1
 
 
 def share_test_recipe(sprout: Path) -> dict:
-    recipe = gc.share_recipe(small_recipe(sprout))
+    recipe = json.loads(json.dumps(SHARE_RECIPE))
+    recipe["sprout"]["tiles_path"] = str(sprout)
     recipe["tiles"]["max_zoom"] = SHARE_TOP
     recipe["tiles"]["solid_zoom"] = SOLID
     return recipe
 
 
-def test_share_recipe_is_a_copy_with_its_own_scratch_and_the_v3_path():
-    import copy
-
-    original = copy.deepcopy(RECIPE)
-    recipe = gc.share_recipe(RECIPE)
-    assert RECIPE == original, "the recipe file's catalog must not change"
+def test_the_v3_recipe_is_its_own_catalog_entry_over_the_same_seed_and_sprout():
+    recipe = SHARE_RECIPE
     contract = gc.require_contract(recipe)
-    assert recipe["id"] != RECIPE["id"] and gc.scratch_prefix(recipe) != gc.scratch_prefix(RECIPE)
-    assert recipe["tiles"]["path"].endswith("/cropland/2024/v3/cropland.pmtiles")
+    assert recipe["id"] == "cropland-2024-v3" != RECIPE["id"]
+    assert gc.scratch_prefix(recipe) != gc.scratch_prefix(RECIPE)
+    assert recipe["seed"] == RECIPE["seed"] and recipe["sprout"] == RECIPE["sprout"]
+    assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles"
     assert (contract["tile_size"], contract["max_zoom"], contract["share_steps"], contract["solid_zoom"]) == (512, 11, 7, 11)
     assert contract["share_curve"] == "sqrt" and contract["resampling"] == "share"
+    assert gc.make_plan(recipe) == gc.make_plan(RECIPE)
 
 
 def test_share_settings_change_the_shard_hash():
-    recipe = gc.share_recipe(RECIPE)
+    recipe = SHARE_RECIPE
     base = pyramid.config_digest(gc.config_of(recipe, gc.require_contract(recipe)))
     for key, value in (("share_steps", 5), ("share_curve", "linear"), ("solid_zoom", 10)):
         changed = json.loads(json.dumps(recipe))
@@ -424,16 +425,16 @@ def test_a_share_shard_is_rebuilt_when_its_root_file_is_missing(sprout, tmp_path
     assert "is done" not in capsys.readouterr().out and root.exists()
 
 
-def test_share_submit_without_approval_writes_the_share_recipe_and_calls_nothing(monkeypatch, tmp_path, capsys):
+def test_share_submit_without_approval_writes_the_v3_recipe_and_calls_nothing(monkeypatch, tmp_path, capsys):
     called = []
     monkeypatch.setattr(cropland, "gcloud", lambda args: called.append(args))
     monkeypatch.setattr(cropland, "upload_with_gcloud", lambda *a: called.append(a))
     monkeypatch.setattr(gc, "ROOT", tmp_path)
-    work = tmp_path / "data" / "tiles" / "cropland-2024-v3-share" / "global"
+    work = tmp_path / "data" / "tiles" / "cropland-2024-v3" / "global"
     work.mkdir(parents=True)
     (work / "pmtiles-3.8.1-py3-none-any.whl").write_bytes(b"")
-    path = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v2.yaml"
-    gc.command_submit(path, 0, False, False, share=True)
+    path = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v3.yaml"
+    gc.command_submit(path, 0, False, False)
     assert called == []
     assert "not submitted" in capsys.readouterr().out
     sent = json.loads((work / "recipe.json").read_text())
