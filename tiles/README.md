@@ -534,7 +534,7 @@ The 8-shade √ version is more accurate in the worst case than the 15-shade lin
 
 Extrapolated to the 1.95 GB class archive: about 3.4 GB at 8 shades (3.2 GB at 6, 2.6 GB at 3). An upper estimate, for the reason above. The archive's own pyramid, not this sample's, decides the real figure. With 512 px tiles the top zoom is 11, so `--solid-zoom 11` (the tile that holds zoom 12 pixels); the size shape is the same.
 
-Still open and not tried: solid at zoom 11 as well (one more zoom saved, but the map would show no density from map zoom 11 up; GFW keeps it to 13). Compressing tile bodies again in the archive would not help: a PNG tile is already deflated.
+Solid from zoom 10 with 6 shades (`--steps 5 --curve sqrt --solid-zoom 10`): 1.25x at Zakouma, 1.27x at Swartland, about 2.5 GB extrapolated. Shading then only shows below map zoom 10. What it gives up at zooms 10 and 11, measured as the opacity change if those zooms were drawn solid instead of graded: Zakouma 18 and 13 points on average (20% and 14% of cropland cells are drawn faint, under 60% opacity, in the graded version), Swartland 11 and 8 points (12% and 8%). Zoom 9 and below keep the full effect. Looked at on Zakouma at 10.4 on satellite: the edges of cropland areas are harder than the graded version, and the result reads like the solid tiles with a fainter fringe below zoom 10. This is the cheapest option that still shades the regional view. Compressing tile bodies again in the archive would not help: a PNG tile is already deflated.
 
 What it changes besides cost. The layer would show a share, not a class, so the info text and legend change, and the colour curve becomes a design choice. Place figures are unaffected, since they come from the sprout.
 
