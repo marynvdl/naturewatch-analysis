@@ -11,6 +11,9 @@ The recipe is the catalog and this file does not edit it. The layer maths
   python tiles/global_cropland.py merge  --recipe ...                  (a Batch task)
   python tiles/global_cropland.py local  --recipe ... --sources DIR --work DIR --top-zoom 9
 
+Add --resampling share to any command for the version 3 share archive (task 09b): 512 px palette tiles, zoom 0 to
+11, cropland/2024/v3. The recipe file is not edited; the share settings are in SHARE below.
+
 `plan` and `local` start nothing billable. `submit` writes the job files and
 prints them; it calls gcloud only with --approved, after the expected cost has
 been approved. Colour stays in the client.
@@ -28,6 +31,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,6 +40,7 @@ from osgeo import gdal  # noqa: E402
 
 import cropland  # noqa: E402
 import pyramid  # noqa: E402
+import transcode  # noqa: E402
 
 gdal.UseExceptions()
 
@@ -44,7 +49,16 @@ SHARD_ZOOM = 5
 CODE_VERSION = "1"
 CLASS_RESAMPLINGS = ("max", "q3", "q2", "nearest")
 CACHE_CONTROL = "public, max-age=3600"  # what the version 1 tile objects serve
-CODE_FILES = ("cropland.py", "pyramid.py", "global_cropland.py")
+CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py")
+# Version 3 (task 09b, option B2). 8 shades spaced in the square root of the share, the top tile solid, 512 px.
+SHARE = {
+    "steps": 7,
+    "curve": "sqrt",
+    "solid_zoom": 11,
+    "tile_size": 512,
+    "max_zoom": 11,
+    "path": "gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles",
+}
 SHARD_SHAPE = {
     "machine": "e2-standard-2",
     "cpu_milli": "2000",
@@ -68,14 +82,52 @@ MERGE_SHAPE = {
 # ---- recipe and plan --------------------------------------------------------
 
 
+def share_recipe(recipe: dict) -> dict:
+    """A copy of the recipe whose tiles block is the version 3 share archive. The recipe file is not edited.
+
+    The copy goes to Batch as recipe.json, so the tasks build the same thing. Its id names the scratch folder,
+    so share shards never meet class shards.
+    """
+    out = json.loads(json.dumps(recipe))
+    out["id"] = recipe["id"].removesuffix("-v2") + "-v3-share"
+    tiles = {key: recipe["tiles"][key] for key in ("min_zoom", "scheme")}
+    out["tiles"] = {
+        **tiles,
+        "path": SHARE["path"],
+        "max_zoom": SHARE["max_zoom"],
+        "tile_size": SHARE["tile_size"],
+        "resampling": "share",
+        "share_steps": SHARE["steps"],
+        "share_curve": SHARE["curve"],
+        "solid_zoom": SHARE["solid_zoom"],
+    }
+    return out
+
+
+def is_share(recipe: dict) -> bool:
+    return recipe["tiles"].get("resampling") == "share"
+
+
 def require_contract(recipe: dict) -> dict:
     """The tile contract, or a refusal. An unset resampling stops here."""
     contract = cropland.tile_contract(recipe)
     if contract["scheme"] != "pmtiles":
         raise SystemExit("this run needs a recipe with tiles.scheme pmtiles")
-    if contract["resampling"] not in CLASS_RESAMPLINGS:
+    if contract["resampling"] == "share":
+        tiles = recipe["tiles"]
+        missing = [key for key in ("share_steps", "share_curve", "solid_zoom") if key not in tiles]
+        if missing:
+            raise SystemExit(f"share needs tiles.{', tiles.'.join(missing)}. Use --resampling share")
+        contract.update(
+            share_steps=int(tiles["share_steps"]), share_curve=tiles["share_curve"], solid_zoom=int(tiles["solid_zoom"])
+        )
+        if contract["tile_size"] != SHARE["tile_size"]:
+            raise SystemExit(f"share tiles are {SHARE['tile_size']} px")
+        if not 1 <= contract["solid_zoom"] <= contract["max_zoom"]:
+            raise SystemExit("solid_zoom must be from 1 to max_zoom")
+    elif contract["resampling"] not in CLASS_RESAMPLINGS:
         raise SystemExit(f"resampling {contract['resampling']} is not a class-value method")
-    if contract["tile_encoding"] != "class-value":
+    elif contract["tile_encoding"] != "class-value":
         raise SystemExit("this run writes class-value tiles only")
     if contract["max_zoom"] <= SHARD_ZOOM:
         raise SystemExit(f"tiles.max_zoom must be above the shard zoom {SHARD_ZOOM}")
@@ -104,7 +156,7 @@ def make_plan(recipe: dict, only: set[str] | None = None) -> list[dict]:
 
 
 def config_of(recipe: dict, contract: dict) -> dict:
-    return {
+    config = {
         "code": CODE_VERSION,
         "recipe": recipe["id"],
         "resampling": contract["resampling"],
@@ -112,6 +164,12 @@ def config_of(recipe: dict, contract: dict) -> dict:
         "shard_zoom": SHARD_ZOOM,
         "sprout": recipe["sprout"]["path"],
     }
+    if contract["resampling"] == "share":  # an old shard is never reused after any of these change
+        config.update(
+            share_steps=contract["share_steps"], share_curve=contract["share_curve"],
+            solid_zoom=contract["solid_zoom"], tile_size=contract["tile_size"],
+        )
+    return config
 
 
 def scratch_prefix(recipe: dict) -> str:
@@ -186,6 +244,25 @@ def shard_paths(scratch: str, shard: dict) -> tuple[str, str]:
     return base + ".pmtiles", base + ".json"
 
 
+def root_path(scratch: str, shard: dict) -> str:
+    """A share shard's root tile, unquantised, for the upper zooms. The palette PNG has too few shades for that."""
+    return scratch.rstrip("/") + "/shards/" + shard["id"] + ".root.npz"
+
+
+def save_root(root: "Share", scratch: str, shard: dict) -> None:
+    local = Path("/tmp") / f"root-{os.getpid()}-{shard['id']}.npz"
+    np.savez(local, share=root.share, weight=root.weight.astype(np.float32), zoom=root.zoom)
+    try:
+        copy(local, root_path(scratch, shard))
+    finally:
+        local.unlink()
+
+
+def load_root(path: Path) -> "Share":
+    with np.load(path) as data:
+        return Share(data["share"], data["weight"].astype(np.float64), int(data["zoom"]))
+
+
 # ---- the layer ----------------------------------------------------------------
 
 
@@ -203,7 +280,38 @@ def decode_png(data: bytes) -> np.ndarray:
     return np.where(alpha == 0, cropland.NODATA, gray).astype(np.uint8)
 
 
+class Share(NamedTuple):
+    """A share tile as the pyramid carries it: share 0 to 1 (-1 nodata), valid zoom 12 pixel count, tile zoom."""
+
+    share: np.ndarray
+    weight: np.ndarray
+    zoom: int
+
+
+def share_layer(contract: dict, source: str):
+    nodata, size = contract["nodata"], contract["tile_size"]
+
+    def render(z: int, x: int, y: int):
+        share = cropland.fraction_tile(Path(source), z, x, y, nodata, size)
+        return None if share is None else Share(share, (share >= 0).astype(np.float64), z)
+
+    def reduce(children: dict):
+        pairs = {key: (value.share, value.weight) for key, value in children.items()}
+        reduced = cropland.reduce_fraction(pairs, size)
+        zoom = next(iter(children.values())).zoom - 1
+        return None if reduced is None else Share(reduced[0], reduced[1], zoom)
+
+    def encode(value: Share) -> bytes:
+        gray, alpha = cropland.share_gray_alpha(value.share)
+        solid = value.zoom >= contract["solid_zoom"]
+        return transcode.share_palette_from_gray(gray, alpha, contract["share_steps"], contract["share_curve"], solid)
+
+    return {"render": render, "reduce": reduce, "encode": encode, "decode": None}
+
+
 def layer(contract: dict, source: str):
+    if contract["resampling"] == "share":
+        return share_layer(contract, source)
     resampling = contract["resampling"]
     return {
         "render": lambda z, x, y: cropland.render_tile(Path(source), z, x, y, contract["nodata"], contract["classes"]),
@@ -214,6 +322,25 @@ def layer(contract: dict, source: str):
 
 
 def archive_metadata(recipe: dict, contract: dict) -> dict:
+    if contract["resampling"] == "share":
+        return {
+            "name": "cropland share",
+            "format": "png",
+            "type": "overlay",
+            "description": (
+                f"Palette. Red is the cropland share on a 0-255 scale, {contract['share_steps'] + 1} shades ({contract['share_curve']}), "
+                f"from zoom {contract['solid_zoom']} two shades. A transparent entry is nodata"
+            ),
+            "encoding": "cropland-share-palette",
+            "resampling": "share",
+            "share_steps": contract["share_steps"],
+            "share_curve": contract["share_curve"],
+            "solid_zoom": contract["solid_zoom"],
+            "tile_size": contract["tile_size"],
+            "recipe": recipe["id"],
+            "sprout": recipe["sprout"]["id"],
+            "version": "3",
+        }
     return {
         "name": "cropland class values",
         "format": "png",
@@ -247,7 +374,11 @@ def run_shard(
     digest = pyramid.config_digest(config)
     file_path, record_path = shard_paths(scratch, shard)
     record = read_json(record_path)
-    if record and record.get("config") == digest and (record["tiles"] == 0 or size_of(file_path) == record["bytes"]):
+    whole = record and (
+        record["tiles"] == 0
+        or (size_of(file_path) == record["bytes"] and (contract["resampling"] != "share" or exists(root_path(scratch, shard))))
+    )
+    if record and record.get("config") == digest and whole:
         print(f"shard {shard['id']} is done, skipping", flush=True)
         return record
     tiles_path = sources or recipe["sprout"]["tiles_path"]
@@ -261,14 +392,17 @@ def run_shard(
     ops = layer(contract, str(vrt))
     out = work / shard["id"] / f"{shard['id']}.pmtiles"
     bounds = union([cell_bounds(name) for name in shard["sources"]])
+    roots: list = []
     result = pyramid.build_shard(
-        shard, top, ops["render"], ops["reduce"], ops["encode"], out, bounds, archive_metadata(recipe, contract)
+        shard, top, ops["render"], ops["reduce"], ops["encode"], out, bounds, archive_metadata(recipe, contract), roots
     )
     result.update(config=digest, sources=shard["sources"], peak_memory_bytes=cropland.peak_memory_bytes())
     if result["tiles"]:
         copy(out, file_path)
         if size_of(file_path) != result["bytes"]:
             raise OSError(f"{file_path} is {size_of(file_path)} bytes, expected {result['bytes']}")
+        if contract["resampling"] == "share":
+            save_root(roots[0], scratch, shard)
     write_json(record_path, result)  # last, so a record means a finished shard
     shutil.rmtree(work / shard["id"], ignore_errors=True)
     print(
@@ -318,13 +452,18 @@ def run_merge(
         copy(file_path, target)
         local_files[shard["id"]] = target
         shard_bytes += target.stat().st_size
+        if contract["resampling"] == "share":
+            copy(root_path(scratch, shard), work / "shards" / f"{shard['id']}.root.npz")
     fetched = time.perf_counter()
 
     ops = layer(contract, "")
-    roots: dict[tuple[int, int], np.ndarray] = {}
+    roots: dict[tuple[int, int], object] = {}
     for shard in plan:
         path = local_files[shard["id"]]
         if path is None:
+            continue
+        if contract["resampling"] == "share":
+            roots[(shard["x"], shard["y"])] = load_root(work / "shards" / f"{shard['id']}.root.npz")
             continue
         first = next(iter(pyramid.read_archive(path)), None)
         if first is not None and first[0] == (shard["z"], shard["x"], shard["y"]):
@@ -550,8 +689,10 @@ def job_name(recipe: dict, kind: str, pilot: int | None = None) -> str:
     return f"tiles-{recipe['id']}-{kind}" + (f"-pilot{pilot}" if pilot is not None else "")
 
 
-def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool) -> None:
+def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool, share: bool = False) -> None:
     recipe = cropland.load_recipe(recipe_path)
+    if share:
+        recipe = share_recipe(recipe)
     require_contract(recipe)
     plan = make_plan(recipe)
     prefix = scratch_prefix(recipe)
@@ -637,12 +778,15 @@ def main() -> None:
     parser.add_argument("--sources", help="folder or prefix of sprout COGs, instead of sprout.tiles_path")
     parser.add_argument("--only", help="comma-separated tile names, for a cropped local run")
     parser.add_argument("--top-zoom", type=int)
+    parser.add_argument("--resampling", choices=("share",), help="share: the version 3 graded archive (task 09b), else the recipe's class method")
     args = parser.parse_args()
     recipe = cropland.load_recipe(args.recipe)
+    if args.resampling == "share":
+        recipe = share_recipe(recipe)
     if args.command == "plan":
         command_plan(recipe)
     elif args.command == "submit":
-        command_submit(args.recipe, args.pilot, args.merge, args.approved)
+        command_submit(args.recipe, args.pilot, args.merge, args.approved, args.resampling == "share")
     elif args.command == "local":
         only = set(args.only.split(",")) if args.only else None
         command_local(recipe, args.sources, args.work, args.top_zoom or recipe["tiles"]["max_zoom"], only)
