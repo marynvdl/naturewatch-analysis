@@ -105,11 +105,7 @@ def tile_body(encoding: str, z: int, x: int, y: int) -> bytes | None:
 # v3 is the merge output in scratch (not public): the server adds the caller's gcloud token. Nothing is written.
 REMOTE = {
     "v2.pmtiles": ("https://storage.googleapis.com/nature-watch-tiles/cropland/2024/v2/cropland.pmtiles", False),
-    "v3.pmtiles": (
-        "https://storage.googleapis.com/storage/v1/b/nature-watch-bucket/o/"
-        + urllib.parse.quote("scratch/tiles/cropland-2024-v3/cropland.pmtiles", safe="") + "?alt=media",
-        True,
-    ),
+    "v3.pmtiles": ("https://storage.googleapis.com/nature-watch-tiles/cropland/2024/v3/cropland.pmtiles", False),
 }
 _token = {"value": None, "at": 0.0}
 

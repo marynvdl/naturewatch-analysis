@@ -41,7 +41,11 @@ Read one sample before the bulk download. The sample is the smallest piece the p
 
 `recipes/cropland-2024-v2.yaml` names the global GLAD annual cropland 2024 seed and sprout. Its id is `cropland-2024-v2`, the same as its sprout id. `cropland-2024.yaml` stays the version 1 record. The seed path is `gs://nature-watch-bucket/seeds/cropland/glad/2024/v2/`. The seed tiles are the 223 files on the publisher’s 2024 index, read on 30 October 2026. There is no country clip. A 10° tile that index does not list is absent. Inside a listed tile, 0 stays other land.
 
-The sprout is one COG per seed tile under `gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/`, with a VRT over them at `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt`. `sprout.layout` is `per-tile`, `sprout.path` is the VRT, and `sprout.tiles_path` is the folder. Its id is `cropland-2024-v2`. The tile COGs carry full-resolution classes and no overviews. Source 100 maps to 1 and source 0 maps to 0. The display object is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, scheme `pmtiles`, encoding class-value. Resampling is unset.
+The sprout is one COG per seed tile under `gs://nature-watch-bucket/sprouts/cropland/2024/v2/tiles/`, with a VRT over them at `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt`. `sprout.layout` is `per-tile`, `sprout.path` is the VRT, and `sprout.tiles_path` is the folder. Its id is `cropland-2024-v2`. The tile COGs carry full-resolution classes and no overviews. Source 100 maps to 1 and source 0 maps to 0. The display object is `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, scheme `pmtiles`, encoding class-value. Resampling is `q3`.
+
+## cropland-2024-v3
+
+`recipes/cropland-2024-v3.yaml` names the version 3 tiles of the same seed and sprout. Its id is `cropland-2024-v3`. The display object is `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles`: 512 px palette tiles, zooms 0–11, resampling `share`, 8 shades on a √share curve, solid from zoom 11. The live app still reads v2 until the app task points at v3.
 
 `20S_020E.tif` was opened on 22 October 2026, before the other South Africa tiles. Every pixel is 0 or 100, and the file sets no nodata value. That file is on the 2024 index. The publisher’s page names only value 100. The recipe keeps the sample.
 

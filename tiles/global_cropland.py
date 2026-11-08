@@ -49,6 +49,7 @@ SHARD_ZOOM = 5
 CODE_VERSION = "1"
 CLASS_RESAMPLINGS = ("max", "q3", "q2", "nearest")
 CACHE_CONTROL = "public, max-age=3600"  # what the version 1 tile objects serve
+CACHE_CONTROL_V3 = "public, max-age=31536000, immutable"
 CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py", "verify_v3.py")
 SHARE_TILE_SIZE = cropland.SHARE_TILE_SIZE  # version 3 (task 09b): the recipe sets the shades, the curve and the solid zoom
 SHARD_SHAPE = {
@@ -465,9 +466,11 @@ def run_merge(
         stats["verify"] = verify_against_sprout(recipe, contract, archive, plan, verify_samples, top)
     if publish:
         upload_archive(archive, dest)
+        cache = CACHE_CONTROL_V3 if "/v3/" in dest else CACHE_CONTROL
+        set_cache_control(dest, cache)
         if dest.startswith("gs://nature-watch-tiles/"):  # a scratch dest is not public
             stats["range_check"] = check_range(dest)
-        stats["cache_control"] = CACHE_CONTROL
+        stats["cache_control"] = cache
     if not keep_scratch:
         delete_prefix(scratch.rstrip("/") + "/shards")
     stats["merge_wall_seconds"] = round(time.perf_counter() - started, 1)
@@ -561,7 +564,6 @@ def upload_archive(archive: Path, dest: str) -> None:
     copy(archive, dest)
     if size_of(dest) != archive.stat().st_size:
         raise OSError(f"{dest} is {size_of(dest)} bytes, expected {archive.stat().st_size}")
-    set_cache_control(dest, CACHE_CONTROL)
 
 
 def check_range(dest: str) -> dict:
