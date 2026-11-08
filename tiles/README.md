@@ -370,9 +370,9 @@ Faster than estimated: the real mean was 267 s a shard (the estimate assumed 5�
 
 Not done here: the app still reads the version 1 PNG template. Task 07 in naturewatch-app changes that, and needs `mapbox-gl` 3.23.0 or later.
 
-## Version 3: class tiles that Safari reads exactly (task 09)
+## Version 3: graded share tiles that Safari reads exactly (tasks 09 and 09b)
 
-Status: **stage 1 done, waiting for approval.** Nothing was published and no virtual machine ran. Stage 2 writes `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles` after approval.
+Status: **published.** `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles` is live. The app still reads v2 until task 10. v1 and v2 were not overwritten.
 
 Code: `tiles/transcode.py` (read v2, write a new encoding, compare, benchmark), `tiles/v3_check.py` and `tiles/v3_check/` (browser checks through Mapbox GL JS and PMTiles), tests in `tiles/test_transcode.py`. Local outputs are in `data/tiles/v3/` (not committed).
 
@@ -507,7 +507,34 @@ What it looks like. The solid class tiles paint a flat orange mass. The graded p
 
 Cost, first pass, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. The next section brings that down to about 3.4 GB. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
 
-**Decision, 8 November 2026 (Maryn): option B2.** Share tiles, 8 shades spaced in √share, top zoom solid, 512 px tiles. Version 3 is therefore a rebuild from the sprout, not a transcode of v2, and it is task 09b ([`docs/tasks/task-09b-cropland-share-tiles-v3.md`](../docs/tasks/task-09b-cropland-share-tiles-v3.md)). Task 09 stage 2 as written (v3 equals v2 pixel for pixel) is not run. Nothing was uploaded or started in the cloud.
+**Decision, 8 November 2026 (Maryn): option B2.** Share tiles, 8 shades spaced in √share, top zoom solid, 512 px tiles. Version 3 is therefore a rebuild from the sprout, not a transcode of v2, and it is task 09b ([`docs/tasks/task-09b-cropland-share-tiles-v3.md`](../docs/tasks/task-09b-cropland-share-tiles-v3.md)). Task 09 stage 2 as written (v3 equals v2 pixel for pixel) is not run.
+
+### Version 3 published (task 09b, 8 November 2026)
+
+Recipe `cookbook/recipes/cropland-2024-v3.yaml` (same seed and sprout as v2). Palette PNG, 512 px, zoom 0–11, 8 shades on a √share curve, solid from archive zoom 11. Path `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles`.
+
+| | Result |
+| --- | --- |
+| Tiles | 1,275,734 (1,275,593 in shards, 141 upper-zoom) |
+| Distinct tile bodies | 413,107 |
+| Bytes | 3,462,749,057 (3.22 GiB) |
+| Cache-Control | `public, max-age=31536000, immutable` |
+| Range request | 206, `Content-Range: bytes 0-126/3462749057`, `Accept-Ranges: bytes` |
+| CORS | GET from `http://localhost:5173` returns `Access-Control-Allow-Origin`. No preflight: Range is a safelisted header |
+| Shard job | `tiles-cropland-2024-v3-shards`, 302 of 302 succeeded, 2 h 18 min wall, 17.2 task-hours, peak 294 MB |
+| Merge job | `tiles-cropland-2024-v3-merge`, 318 s wall, peak 3.16 GB, 12 sprout subtrees (848 tiles) byte-identical |
+| Verify job | `tiles-cropland-2024-v3-verify`, 10 of 10 succeeded, 37 min wall |
+| Tile ids vs v2 | every v3 tile has v2 tiles under it; every v2 tile at zoom 1 and up sits in a v3 tile (1,275,734 and 5,084,648) |
+| Nodata vs v2 | 1,275,734 tiles, 0 pixels wrong |
+| Sprout sample | 16 zoom-8 roots, 1,360 tiles byte-identical. Opacity error on 15,835,407 graded cells: mean 1.2 points, worst 23.3 |
+| Looked at | Chrome and Safari on macOS, `preview.html`, v2 live against this archive: Zakouma, Swartland, Sahel, Kazakhstan, Iowa, Punjab. Maryn: v3 looks really good. Safari draws v3 cleanly; v2 still shows the pixelated artefact |
+| Cost | about $1–2 (pilot + shards + merge + verify). Storage about $0.07 a month. Copy to the public bucket inside the region, no egress |
+| Virtual machines left running | none |
+| Scratch | shards kept at `gs://nature-watch-bucket/scratch/tiles/cropland-2024-v3/` until deleted by hand |
+
+Limitation recorded, not rebuilt: the share is rounded to gray 0–255 before a shade is chosen, so a cell under 1/510 cropland (one isolated pixel in a coarse cell) draws transparent instead of at about 20% opacity. That is the 23.3-point worst error. The mean is 1.2 points. Approved to publish as is on 8 November 2026.
+
+The live app still reads v2. Task 10 in naturewatch-app points the layer at v3, sets `tileSize: 512`, `maxzoom: 11`, the paint and the legend text.
 
 #### Cutting the share tiles down (8 November 2026)
 

@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cropland v2 (solid class, live) against v3 (graded share, 512 px)</title>
+<link href="/lib/mapbox-gl.css" rel="stylesheet">
+<script src="/lib/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { padding: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #grid { display: grid; gap: 2px; height: calc(100% - 44px); grid-template-columns: 1fr 1fr; }
+  .pane { position: relative; }
+  .pane .map { position: absolute; inset: 0; }
+  .pane .tag { position: absolute; z-index: 2; left: 4px; top: 4px; background: #fffd; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="basemap"><option value="standard">Standard monochrome (app)</option><option value="satellite">Satellite (app)</option><option value="dark">Dark</option></select>
+  <span id="places"></span> <span id="zoom"></span> <span id="problem" style="color:#b00"></span>
+</div>
+<div id="grid"></div>
+<script>
+// Left: v2 as the app paints it today (solid class, 256 px tiles, maxzoom 12). Right: the v3 share archive
+// (512 px tiles, zoom 0-11), opacity 0.2 + 0.75 sqrt(share) below map zoom 11 and solid from it.
+// ?at=lng,lat,zoom  ?basemap=standard|satellite|dark
+const P = new URLSearchParams(location.search);
+const PLACES = { Zakouma: [22.63, 10.02, 9], Swartland: [18.8, -33.35, 9], 'Sahel (sparse)': [-5.5, 13.0, 8], 'Kazakhstan steppe': [68.5, 51.5, 8], Iowa: [-93.6, 42.0, 8], Punjab: [75.0, 30.9, 8] };
+const start = P.get('at') ? P.get('at').split(',').map(Number) : PLACES.Zakouma;
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+  dark: { style: 'mapbox://styles/mapbox/dark-v11' },
+};
+const STEPS = 7, SOLID_ZOOM = 11, ORANGE = [229, 145, 57];
+const rgba = a => `rgba(${ORANGE.join(',')},${a})`;
+const opacityAt = share => 0.2 + 0.75 * Math.sqrt(share);
+const shades = () => {
+  const expr = ['interpolate', ['linear'], ['raster-value'], 0, rgba(0)];
+  for (let k = 1; k <= STEPS; k++) { const share = (k / STEPS) ** 2; expr.push(Math.max(1, Math.round(share * 255)), rgba(opacityAt(share))); }
+  return expr;
+};
+const paint = extra => ({ 'raster-opacity': 1, 'raster-resampling': 'nearest', 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 255], 'raster-fade-duration': 0, ...extra });
+const VARIANTS = { v2: 'v2 live: solid class (256 px)', v3: 'v3: graded share, 8 shades, solid from 11 (512 px)' };
+
+mapboxgl.accessToken = window.CHECK.token;
+const basemapEl = document.getElementById('basemap');
+basemapEl.value = P.get('basemap') || 'standard';
+
+function addLayers(map, variant) {
+  const style = map.getStyle();
+  const onStandard = !!(style && style.imports && style.imports.length);
+  let before;
+  for (const layer of style.layers || []) { if (layer.type === 'line') { before = layer.id; break; } }
+  if (!window.CHECK.token) document.getElementById('problem').textContent = 'no Mapbox token: start the server with MAPBOX_ACCESS_TOKEN set';
+  for (const id of ['graded', 'solid']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('c')) map.removeSource('c');
+  const make = (id, extra, zooms) => {
+    const spec = { id, type: 'raster', source: 'c', paint: paint(extra), ...zooms };
+    if (onStandard) spec.slot = 'middle';
+    map.addLayer(spec, onStandard ? undefined : before);
+  };
+  if (variant === 'v2') {
+    map.addSource('c', { type: 'raster', tileSize: 256, url: `${location.origin}/remote/v2.pmtiles`, maxzoom: 12 });
+    make('solid', { 'raster-color': ['step', ['raster-value'], 'rgba(0,0,0,0)', 0.5, '#e59139'], 'raster-color-range': [0, 1] });
+  } else {
+    map.addSource('c', { type: 'raster', tileSize: 512, url: `${location.origin}/remote/v3.pmtiles`, maxzoom: 11 });
+    make('graded', { 'raster-color': shades() }, { maxzoom: SOLID_ZOOM });
+    make('solid', { 'raster-color': ['step', ['raster-value'], rgba(0), 128, rgba(1)] }, { minzoom: SOLID_ZOOM });
+  }
+}
+
+const grid = document.getElementById('grid');
+const maps = Object.keys(VARIANTS).map(variant => {
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  pane.innerHTML = `<div class="tag">${VARIANTS[variant]}</div><div class="map"></div>`;
+  grid.appendChild(pane);
+  const base = STYLES[basemapEl.value];
+  const map = new mapboxgl.Map({ container: pane.querySelector('.map'), style: base.style, config: base.config, projection: 'globe', center: start.slice(0, 2), zoom: start[2], attributionControl: false });
+  map.on('style.load', () => addLayers(map, variant));
+  // Say what failed instead of drawing nothing.
+  map.on('error', e => {
+    const text = `${variant}: ${(e.error && e.error.message) || e.message || 'error'}`;
+    document.getElementById('problem').textContent = text.slice(0, 220);
+    console.error(text, e);
+  });
+  return map;
+});
+let syncing = false;
+maps.forEach(map => map.on('move', () => {
+  if (syncing) return;
+  syncing = true;
+  for (const other of maps) if (other !== map) other.jumpTo({ center: map.getCenter(), zoom: map.getZoom() });
+  syncing = false;
+  document.getElementById('zoom').textContent = 'zoom ' + map.getZoom().toFixed(2);
+}));
+basemapEl.onchange = () => { const base = STYLES[basemapEl.value]; maps.forEach(map => map.setStyle(base.style, { config: base.config })); };
+const places = document.getElementById('places');
+for (const [name, at] of Object.entries(PLACES)) {
+  const button = document.createElement('button');
+  button.textContent = name;
+  button.onclick = () => maps.forEach(m => m.jumpTo({ center: at.slice(0, 2), zoom: at[2] }));
+  places.appendChild(button);
+}
+for (const z of [6, 8, 9, 10, 11, 12]) {
+  const button = document.createElement('button');
+  button.textContent = 'z' + z;
+  button.onclick = () => maps[0].jumpTo({ zoom: z });
+  places.appendChild(button);
+}
+window.__maps = maps;
+</script>
+</body>
+</html>

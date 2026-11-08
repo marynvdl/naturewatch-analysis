@@ -440,3 +440,15 @@ def test_share_submit_without_approval_writes_the_v3_recipe_and_calls_nothing(mo
     sent = json.loads((work / "recipe.json").read_text())
     assert sent["tiles"]["resampling"] == "share" and sent["tiles"]["path"].endswith("/v3/cropland.pmtiles")
     assert "transcode.py" in gc.CODE_FILES
+
+
+def test_merge_submit_to_a_scratch_dest_keeps_the_shards(monkeypatch, tmp_path):
+    monkeypatch.setattr(gc, "ROOT", tmp_path)
+    work = tmp_path / "data" / "tiles" / "cropland-2024-v3" / "global"
+    work.mkdir(parents=True)
+    (work / "pmtiles-3.8.1-py3-none-any.whl").write_bytes(b"")
+    path = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024-v3.yaml"
+    gc.command_submit(path, None, True, False, dest="gs://nature-watch-bucket/scratch/x/cropland.pmtiles")
+    config = json.loads((work / "tiles-cropland-2024-v3-merge.json").read_text())
+    command = config["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]["commands"][1]
+    assert "--dest gs://nature-watch-bucket/scratch/x/cropland.pmtiles --keep-scratch" in command

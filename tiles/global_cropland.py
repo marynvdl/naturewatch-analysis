@@ -49,7 +49,8 @@ SHARD_ZOOM = 5
 CODE_VERSION = "1"
 CLASS_RESAMPLINGS = ("max", "q3", "q2", "nearest")
 CACHE_CONTROL = "public, max-age=3600"  # what the version 1 tile objects serve
-CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py")
+CACHE_CONTROL_V3 = "public, max-age=31536000, immutable"
+CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py", "verify_v3.py")
 SHARE_TILE_SIZE = cropland.SHARE_TILE_SIZE  # version 3 (task 09b): the recipe sets the shades, the curve and the solid zoom
 SHARD_SHAPE = {
     "machine": "e2-standard-2",
@@ -465,8 +466,11 @@ def run_merge(
         stats["verify"] = verify_against_sprout(recipe, contract, archive, plan, verify_samples, top)
     if publish:
         upload_archive(archive, dest)
-        stats["range_check"] = check_range(dest)
-        stats["cache_control"] = CACHE_CONTROL
+        cache = CACHE_CONTROL_V3 if "/v3/" in dest else CACHE_CONTROL
+        set_cache_control(dest, cache)
+        if dest.startswith("gs://nature-watch-tiles/"):  # a scratch dest is not public
+            stats["range_check"] = check_range(dest)
+        stats["cache_control"] = cache
     if not keep_scratch:
         delete_prefix(scratch.rstrip("/") + "/shards")
     stats["merge_wall_seconds"] = round(time.perf_counter() - started, 1)
@@ -560,7 +564,6 @@ def upload_archive(archive: Path, dest: str) -> None:
     copy(archive, dest)
     if size_of(dest) != archive.stat().st_size:
         raise OSError(f"{dest} is {size_of(dest)} bytes, expected {archive.stat().st_size}")
-    set_cache_control(dest, CACHE_CONTROL)
 
 
 def check_range(dest: str) -> dict:
@@ -659,7 +662,7 @@ def job_name(recipe: dict, kind: str, pilot: int | None = None) -> str:
     return f"tiles-{recipe['id']}-{kind}" + (f"-pilot{pilot}" if pilot is not None else "")
 
 
-def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool) -> None:
+def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: bool, dest: str | None = None) -> None:
     recipe = cropland.load_recipe(recipe_path)
     require_contract(recipe)
     plan = make_plan(recipe)
@@ -674,7 +677,8 @@ def command_submit(recipe_path: Path, pilot: int | None, merge: bool, approved: 
         wheel_files = list(work.glob("pmtiles-*.whl"))
     wheel = wheel_files[0].name
     if merge:
-        config = batch_job(prefix, MERGE_SHAPE, MERGE_COMMAND, 1, wheel, "merge")
+        command = MERGE_COMMAND + (f" --dest {dest} --keep-scratch" if dest else "")
+        config = batch_job(prefix, MERGE_SHAPE, command, 1, wheel, "merge")
         name = job_name(recipe, "merge")
     elif pilot is not None:
         config = batch_job(prefix, SHARD_SHAPE, SHARD_COMMAND.replace("shard --", f"shard --index {pilot} --"), 1, wheel, "pilot")
@@ -746,12 +750,14 @@ def main() -> None:
     parser.add_argument("--sources", help="folder or prefix of sprout COGs, instead of sprout.tiles_path")
     parser.add_argument("--only", help="comma-separated tile names, for a cropped local run")
     parser.add_argument("--top-zoom", type=int)
+    parser.add_argument("--keep-scratch", action="store_true", help="merge: keep the shard files, so a failed check does not cost a rebuild")
+    parser.add_argument("--dest", help="merge: write the archive here instead of tiles.path, to check it before it is published")
     args = parser.parse_args()
     recipe = cropland.load_recipe(args.recipe)
     if args.command == "plan":
         command_plan(recipe)
     elif args.command == "submit":
-        command_submit(args.recipe, args.pilot, args.merge, args.approved)
+        command_submit(args.recipe, args.pilot, args.merge, args.approved, args.dest)
     elif args.command == "local":
         only = set(args.only.split(",")) if args.only else None
         command_local(recipe, args.sources, args.work, args.top_zoom or recipe["tiles"]["max_zoom"], only)
@@ -766,7 +772,8 @@ def main() -> None:
             run_shard(recipe, index, args.work, scratch, args.sources)
         else:
             run_merge(
-                recipe, args.work, scratch, recipe["tiles"]["path"], verify_samples=args.verify_samples
+                recipe, args.work, scratch, args.dest or recipe["tiles"]["path"], verify_samples=args.verify_samples,
+                keep_scratch=args.keep_scratch
             )
 
 
