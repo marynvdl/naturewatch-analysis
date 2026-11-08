@@ -23,7 +23,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -99,6 +101,26 @@ def tile_body(encoding: str, z: int, x: int, y: int) -> bytes | None:
     return Reader(get).get(z, x, y)
 
 
+# Archives that are read from the cloud through this server, so the page needs no public bucket or CORS.
+# v3 is the merge output in scratch (not public): the server adds the caller's gcloud token. Nothing is written.
+REMOTE = {
+    "v2.pmtiles": ("https://storage.googleapis.com/nature-watch-tiles/cropland/2024/v2/cropland.pmtiles", False),
+    "v3.pmtiles": (
+        "https://storage.googleapis.com/storage/v1/b/nature-watch-bucket/o/"
+        + urllib.parse.quote("scratch/tiles/cropland-2024-v3/cropland.pmtiles", safe="") + "?alt=media",
+        True,
+    ),
+}
+_token = {"value": None, "at": 0.0}
+
+
+def gcloud_token() -> str:
+    if _token["value"] is None or time.time() - _token["at"] > 1800:
+        _token["value"] = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=True).stdout.strip()
+        _token["at"] = time.time()
+    return _token["value"]
+
+
 class Handler(ByteRangeHandler):
     """Archives with Range, the pages, expected values, raw tiles, and a results sink."""
 
@@ -140,6 +162,8 @@ class Handler(ByteRangeHandler):
             self.path = "/" + parts[2]
             self.directory = str(VIEWS)
             super().do_GET()
+        elif parts[0] == "remote" and len(parts) == 2 and parts[1] in REMOTE:
+            self.proxy(*REMOTE[parts[1]])
         elif parts[0] == "archives":
             # ?delay=ms&cc=<Cache-Control> imitate a slow host and its headers, to see how the browser queues requests.
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -151,6 +175,28 @@ class Handler(ByteRangeHandler):
         else:
             self.directory = str(PAGES)
             super().do_GET()
+
+    def proxy(self, url: str, auth: bool) -> None:
+        """Forward a Range request to the archive and relay the answer."""
+        headers = {"Range": self.headers.get("Range", "bytes=0-")}
+        if auth:
+            headers["Authorization"] = "Bearer " + gcloud_token()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+                body, status, content_range = response.read(), response.status, response.headers.get("Content-Range")
+        except urllib.error.HTTPError as error:
+            self._send(error.code, b"", "text/plain")
+            return
+        self.send_response(status)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        if content_range:
+            self.send_header("Content-Range", content_range)
+        self.end_headers()
+        self.wfile.write(body)
+        Handler.remote_bytes += len(body)
+
+    remote_bytes = 0
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
