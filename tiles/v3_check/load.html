@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cropland and treeloss cold load</title>
+<link href="/lib/mapbox-gl.css" rel="stylesheet">
+<script src="/lib/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>html, body, #map { margin: 0; width: 1024px; height: 768px; }</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+// One layer on a blank style, so only its own requests are counted. Same view for both layers:
+// Zakouma at map zoom 8 (tile zoom 9), then one pan of 60% of the width at the same zoom.
+const P = new URLSearchParams(location.search);
+const C = window.CHECK;
+const layer = P.get('layer') || 'cropland';
+const url = P.get('url') || C.v2;
+const view = { center: P.get('center') ? P.get('center').split(',').map(Number) : [22.63, 10.02], zoom: Number(P.get('zoom') || 8) };
+mapboxgl.accessToken = C.token;
+const t0 = performance.now();
+const map = new mapboxgl.Map({
+  container: 'map', style: { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#eee' } }] },
+  ...view, projection: 'globe', attributionControl: false, fadeDuration: 0,
+});
+const marks = {};
+const mark = name => { if (!(name in marks)) marks[name] = Math.round(performance.now() - t0); };
+let phase = 'open';
+let tiles = 0;
+
+map.on('sourcedata', e => {
+  if (e.sourceId !== 'x' || !e.tile) return;
+  tiles++;
+  mark(`${phase}_first_tile`);
+  map.once('render', () => mark(`${phase}_first_render`));
+});
+
+function resources() {
+  return performance.getEntriesByType('resource')
+    .filter(r => !r.name.includes(location.host) && !r.name.includes('mapbox.com'))
+    .map(r => ({ url: r.name.slice(0, 120), start: Math.round(r.startTime), end: Math.round(r.responseEnd), size: r.transferSize, status: r.responseStatus }));
+}
+
+async function plainFetches(count) {
+  // The same object, Range reads in parallel, no Mapbox: shows whether the host or the client queues them.
+  const started = performance.now();
+  const times = await Promise.all(Array.from({ length: count }, async (_, i) => {
+    const offset = Number(P.get('base') || 3408113) + Math.floor((i + 0.5) / count * Number(P.get('span') || 2.8e9));
+    const t = performance.now();
+    const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + 1023}` }, cache: P.get('cache') || 'no-store' });
+    await response.arrayBuffer();
+    return { status: response.status, ms: Math.round(performance.now() - t) };
+  }));
+  await fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    page: 'load', label: `fetch-${P.get('run') || 0}`, layer: 'fetch', summary: { total_ms: Math.round(performance.now() - started), times }, final: true,
+  }) });
+}
+
+map.on('load', () => {
+  mark('style_loaded');
+  if (layer === 'fetch') { plainFetches(Number(P.get('count') || 20)); return; }
+  const source = layer === 'cropland'
+    ? { type: 'raster', tileSize: Number(P.get('tilesize') || 256), url, maxzoom: P.get('tilesize') === '512' ? 11 : 12 }
+    : { type: 'raster', tileSize: 256, tiles: [C.gfw] };
+  const paint = layer === 'cropland'
+    ? { 'raster-resampling': 'nearest', 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 1], 'raster-color': ['step', ['raster-value'], 'rgba(0,0,0,0)', 0.5, '#e59139'], 'raster-fade-duration': 0 }
+    : {};
+  marks.layer_added = Math.round(performance.now() - t0);
+  map.addSource('x', source);
+  map.addLayer({ id: 'x', type: 'raster', source: 'x', paint });
+  map.once('idle', () => {
+    mark('open_idle');
+    const openTiles = tiles;
+    phase = 'pan';
+    const panStart = performance.now();
+    map.panBy([614, 0], { duration: 0 });
+    map.once('idle', async () => {
+      marks.pan_idle_after_pan = Math.round(performance.now() - panStart);
+      for (const key of ['pan_first_tile', 'pan_first_render']) if (key in marks) marks[key + '_after_pan'] = Math.round(marks[key] - (panStart - t0));
+      await fetch('/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        page: 'load', label: `${layer}-${P.get('run') || 0}`, layer, view, summary: marks,
+        tiles: { open: openTiles, pan: tiles - openTiles }, resources: resources(), final: true,
+      }) });
+    });
+  });
+});
+</script>
+</body>
+</html>

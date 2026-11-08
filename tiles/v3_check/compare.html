@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cropland v3 compare</title>
+<link href="/lib/mapbox-gl.css" rel="stylesheet">
+<script src="/lib/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { padding: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #grid { display: grid; gap: 2px; height: calc(100% - 80px); }
+  .pane { position: relative; }
+  .pane .map { position: absolute; inset: 0; }
+  .pane .tag { position: absolute; z-index: 2; left: 4px; top: 4px; background: #fffc; padding: 1px 5px; border-radius: 3px; }
+  button, select { font: inherit; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="basemap">
+    <option value="standard">Standard monochrome (app)</option>
+    <option value="light">Light</option>
+    <option value="satellite">Satellite (app)</option>
+    <option value="dark">Dark</option>
+  </select>
+  <select id="enc"></select>
+  <span id="places"></span>
+  <span id="zoom"></span>
+</div>
+<div id="grid"></div>
+<script>
+// The app's paint: classRasterPaint([{ value: 1, color: '#e59139' }]), nearest resampling, globe.
+// ?single=1 shows one map and a picker (phones). Otherwise one pane per encoding, moving together.
+const P = new URLSearchParams(location.search);
+const C = window.CHECK;
+const local = location.hostname === 'localhost';
+const sources = [...(local ? ['v2-live'] : []), ...C.encodings];
+const single = P.has('single');
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  light: { style: 'mapbox://styles/mapbox/light-v11' },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+  dark: { style: 'mapbox://styles/mapbox/dark-v11' },
+};
+const PLACES = {
+  'Zakouma z9': [22.63, 10.02, 9], 'Zakouma z12': [22.63, 10.02, 12], 'Zakouma z13.5': [22.63, 10.02, 13.5],
+  'Zakouma z6': [22.63, 10.02, 6], 'Africa z2': [20, 5, 2], 'Madagascar edge z9': [49.98, -18.15, 9],
+  'Swartland z11.4': [18.8, -33.35, 11.4], 'Ocean z6': [-30, 0, 6],
+};
+mapboxgl.accessToken = C.token;
+const url = enc => enc === 'v2-live' ? C.v2 : `${location.origin}/archives/${enc}.pmtiles`;
+const mix = enc => enc.includes('r255') ? [1, 0, 0, 0] : [255, 0, 0, 0];
+const start = P.get('at') ? P.get('at').split(',').map(Number) : PLACES['Zakouma z9'];
+const basemapEl = document.getElementById('basemap');
+basemapEl.value = P.get('basemap') || 'standard';
+
+function addCropland(map, enc) {
+  const style = map.getStyle();
+  const onStandard = !!(style && style.imports && style.imports.length);
+  let before;
+  for (const layer of style.layers || []) { if (layer.type === 'line') { before = layer.id; break; } }
+  if (map.getLayer('cropland')) map.removeLayer('cropland');
+  if (map.getSource('cropland')) map.removeSource('cropland');
+  const big = enc.endsWith('-512');
+  map.addSource('cropland', { type: 'raster', tileSize: big ? 512 : 256, url: url(enc), maxzoom: big ? 11 : 12 });
+  const spec = {
+    id: 'cropland', type: 'raster', source: 'cropland',
+    paint: {
+      'raster-opacity': 1, 'raster-resampling': P.get('resampling') || 'nearest',
+      'raster-color-mix': mix(enc), 'raster-color-range': [0, 1],
+      'raster-color': ['step', ['raster-value'], 'rgba(0,0,0,0)', 0.5, '#e59139'],
+      'raster-fade-duration': 0,
+    },
+  };
+  if (onStandard) spec.slot = 'middle';
+  map.addLayer(spec, onStandard ? undefined : before);
+}
+
+function makeMap(container, enc) {
+  const base = STYLES[basemapEl.value];
+  const map = new mapboxgl.Map({
+    container, style: base.style, config: base.config, projection: 'globe',
+    center: start.slice(0, 2), zoom: start[2], attributionControl: false,
+  });
+  map.enc = enc;
+  map.on('style.load', () => addCropland(map, map.enc));
+  return map;
+}
+
+const grid = document.getElementById('grid');
+const shown = single ? [P.get('enc') || 'gray-alpha'] : (P.get('show') || sources.join(',')).split(',');
+const cols = Math.ceil(Math.sqrt(shown.length));
+grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+const maps = shown.map(enc => {
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  pane.innerHTML = `<div class="tag">${enc}</div><div class="map"></div>`;
+  grid.appendChild(pane);
+  const map = makeMap(pane.querySelector('.map'), enc);
+  map.tag = pane.querySelector('.tag');
+  return map;
+});
+
+let syncing = false;
+maps.forEach(map => map.on('move', () => {
+  if (syncing) return;
+  syncing = true;
+  for (const other of maps) if (other !== map) other.jumpTo({ center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() });
+  syncing = false;
+  document.getElementById('zoom').textContent = 'zoom ' + map.getZoom().toFixed(2);
+}));
+
+basemapEl.onchange = () => {
+  const base = STYLES[basemapEl.value];
+  maps.forEach(map => map.setStyle(base.style, { config: base.config }));
+};
+
+const encEl = document.getElementById('enc');
+if (single) {
+  encEl.innerHTML = sources.map(s => `<option>${s}</option>`).join('');
+  encEl.value = shown[0];
+  encEl.onchange = () => { maps[0].enc = encEl.value; maps[0].tag.textContent = encEl.value; addCropland(maps[0], encEl.value); };
+} else {
+  encEl.style.display = 'none';
+}
+
+const placesEl = document.getElementById('places');
+for (const [name, [lng, lat, zoom]] of Object.entries(PLACES)) {
+  const button = document.createElement('button');
+  button.textContent = name;
+  button.onclick = () => maps[0].jumpTo({ center: [lng, lat], zoom });
+  placesEl.appendChild(button);
+}
+</script>
+</body>
+</html>

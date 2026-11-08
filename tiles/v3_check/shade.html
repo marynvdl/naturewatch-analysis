@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cropland: solid class tiles against graded share tiles</title>
+<link href="/lib/mapbox-gl.css" rel="stylesheet">
+<script src="/lib/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { padding: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #grid { display: grid; gap: 2px; height: calc(100% - 44px); grid-template-columns: repeat(var(--cols), 1fr); }
+  .pane { position: relative; }
+  .pane .map { position: absolute; inset: 0; }
+  .pane .tag { position: absolute; z-index: 2; left: 4px; top: 4px; background: #fffd; padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="basemap"><option value="standard">Standard monochrome (app)</option><option value="satellite">Satellite (app)</option><option value="dark">Dark</option></select>
+  <span id="places"></span> <span id="zoom"></span>
+</div>
+<div id="grid"></div>
+<script>
+// Panes: the planned v3 class tiles as the app paints them today, and share tiles (15 and 255 shades) painted
+// with opacity that follows the cropland share below tile zoom 12, solid from 12 up, like Global Forest Watch.
+// ?w=zakouma|swartland  ?at=lng,lat,zoom  ?show=class,share15,s7,s5,s2  ?basemap=standard|satellite|dark  ?curve=sqrt|linear
+const P = new URLSearchParams(location.search);
+const C = window.CHECK;
+const win = P.get('w') || 'zakouma';
+const PLACES = { zakouma: [22.63, 10.02], swartland: [18.8, -33.35] };
+const ZOOMS = [6, 8, 9, 10, 11, 12, 13.5];
+const start = P.get('at') ? P.get('at').split(',').map(Number) : [...PLACES[win], 9];
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+  dark: { style: 'mapbox://styles/mapbox/dark-v11' },
+};
+// size is against the planned class tiles for the same window. share15 stores shades at zoom 12 too, which the map never shows.
+const VARIANTS = {
+  class: { label: 'planned v3: solid class (1.0x)' },
+  share15: { label: 'share, 15 shades, linear (3.1x)', steps: 14, curve: 'linear' },
+  s7: { label: 'share, 8 shades, solid at 12 (1.8x)', steps: 7, curve: 'sqrt' },
+  s5: { label: 'share, 6 shades, solid at 12 (1.7x)', steps: 5, curve: 'sqrt' },
+  s5z10: { label: 'share, 6 shades, solid from 10 (1.25x)', steps: 5, curve: 'sqrt', solidZoom: 10 },
+  s2: { label: 'share, 3 shades, solid at 12 (1.4x)', steps: 2, curve: 'sqrt' },
+};
+const ORANGE = [229, 145, 57];
+const rgba = a => `rgba(${ORANGE.join(',')},${a})`;
+// raster-value is the red channel on a 0-255 scale: the share in percent x 2.55.
+const opacityAt = share => P.get('curve') === 'linear' ? 0.1 + 0.85 * share : 0.2 + 0.75 * Math.sqrt(share);
+function shadeFor(v) {
+  const expr = ['interpolate', ['linear'], ['raster-value'], 0, rgba(0)];
+  // a stop on every shade the tiles hold, so the colour is exact at each one
+  const shares = v.curve === 'sqrt' ? Array.from({ length: v.steps }, (_, i) => ((i + 1) / v.steps) ** 2) : [0.004, 0.05, 0.15, 0.3, 0.5, 0.75, 1];
+  for (const share of shares) expr.push(Math.max(1, Math.round(share * 255)), rgba(opacityAt(share)));
+  return expr;
+}
+const SOLID = ['step', ['raster-value'], rgba(0), 128, rgba(1)];
+
+mapboxgl.accessToken = C.token;
+const basemapEl = document.getElementById('basemap');
+basemapEl.value = P.get('basemap') || 'standard';
+
+function paint(extra) {
+  return { 'raster-opacity': 1, 'raster-resampling': 'nearest', 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 255], 'raster-fade-duration': 0, ...extra };
+}
+
+function addLayers(map, variant) {
+  const style = map.getStyle();
+  const onStandard = !!(style && style.imports && style.imports.length);
+  let before;
+  for (const layer of style.layers || []) { if (layer.type === 'line') { before = layer.id; break; } }
+  for (const id of ['graded', 'solid']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('c')) map.removeSource('c');
+  map.addSource('c', { type: 'raster', tileSize: 256, url: `${location.origin}/archives/${variant}-${win}.pmtiles`, maxzoom: 12 });
+  const make = (id, extra, zooms) => {
+    const spec = { id, type: 'raster', source: 'c', paint: paint(extra), ...zooms };
+    if (onStandard) spec.slot = 'middle';
+    map.addLayer(spec, onStandard ? undefined : before);
+  };
+  const v = VARIANTS[variant];
+  if (variant === 'class') {
+    // The app today: class 1 solid orange, class 0 clear.
+    make('solid', { 'raster-color': ['step', ['raster-value'], 'rgba(0,0,0,0)', 0.5, '#e59139'], 'raster-color-range': [0, 1] });
+  } else {
+    const solidFrom = v.solidZoom || 12;
+    make('graded', { 'raster-color': shadeFor(v) }, { maxzoom: solidFrom });
+    make('solid', { 'raster-color': SOLID }, { minzoom: solidFrom });
+  }
+}
+
+const grid = document.getElementById('grid');
+const shown = (P.get('show') || 'class,share15,s7,s2').split(',');
+grid.style.setProperty('--cols', shown.length);
+const maps = shown.map(variant => {
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  pane.innerHTML = `<div class="tag">${VARIANTS[variant].label}</div><div class="map"></div>`;
+  grid.appendChild(pane);
+  const base = STYLES[basemapEl.value];
+  const map = new mapboxgl.Map({ container: pane.querySelector('.map'), style: base.style, config: base.config, projection: 'globe', center: start.slice(0, 2), zoom: start[2], attributionControl: false });
+  map.on('style.load', () => addLayers(map, variant));
+  return map;
+});
+
+let syncing = false;
+maps.forEach(map => map.on('move', () => {
+  if (syncing) return;
+  syncing = true;
+  for (const other of maps) if (other !== map) other.jumpTo({ center: map.getCenter(), zoom: map.getZoom() });
+  syncing = false;
+  document.getElementById('zoom').textContent = 'zoom ' + map.getZoom().toFixed(2);
+}));
+basemapEl.onchange = () => { const base = STYLES[basemapEl.value]; maps.forEach(map => map.setStyle(base.style, { config: base.config })); };
+const places = document.getElementById('places');
+for (const z of ZOOMS) {
+  const button = document.createElement('button');
+  button.textContent = 'z' + z;
+  button.onclick = () => maps[0].jumpTo({ zoom: z });
+  places.appendChild(button);
+}
+window.__maps = maps;
+</script>
+</body>
+</html>
