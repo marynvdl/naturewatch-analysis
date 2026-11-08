@@ -49,7 +49,7 @@ SHARD_ZOOM = 5
 CODE_VERSION = "1"
 CLASS_RESAMPLINGS = ("max", "q3", "q2", "nearest")
 CACHE_CONTROL = "public, max-age=3600"  # what the version 1 tile objects serve
-CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py")
+CODE_FILES = ("cropland.py", "pyramid.py", "transcode.py", "global_cropland.py", "verify_v3.py")
 SHARE_TILE_SIZE = cropland.SHARE_TILE_SIZE  # version 3 (task 09b): the recipe sets the shades, the curve and the solid zoom
 SHARD_SHAPE = {
     "machine": "e2-standard-2",
