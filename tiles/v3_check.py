@@ -179,14 +179,21 @@ class Handler(ByteRangeHandler):
     def proxy(self, url: str, auth: bool) -> None:
         """Forward a Range request to the archive and relay the answer."""
         headers = {"Range": self.headers.get("Range", "bytes=0-")}
-        if auth:
-            headers["Authorization"] = "Bearer " + gcloud_token()
+        name = "v3" if auth else "v2"
         try:
+            if auth:
+                headers["Authorization"] = "Bearer " + gcloud_token()
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
                 body, status, content_range = response.read(), response.status, response.headers.get("Content-Range")
         except urllib.error.HTTPError as error:
+            print(f"remote {name} {headers['Range']} -> {error.code} {error.reason}", flush=True)
             self._send(error.code, b"", "text/plain")
             return
+        except Exception as error:  # no gcloud login, no network
+            print(f"remote {name} {headers['Range']} -> failed: {error}", flush=True)
+            self._send(502, str(error).encode(), "text/plain")
+            return
+        print(f"remote {name} {headers['Range']} -> {status} {len(body)} bytes", flush=True)
         self.send_response(status)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))

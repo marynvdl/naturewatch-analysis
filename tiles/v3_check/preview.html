@@ -19,7 +19,7 @@
 <body>
 <div id="bar">
   <select id="basemap"><option value="standard">Standard monochrome (app)</option><option value="satellite">Satellite (app)</option><option value="dark">Dark</option></select>
-  <span id="places"></span> <span id="zoom"></span>
+  <span id="places"></span> <span id="zoom"></span> <span id="problem" style="color:#b00"></span>
 </div>
 <div id="grid"></div>
 <script>
@@ -54,6 +54,7 @@ function addLayers(map, variant) {
   const onStandard = !!(style && style.imports && style.imports.length);
   let before;
   for (const layer of style.layers || []) { if (layer.type === 'line') { before = layer.id; break; } }
+  if (!window.CHECK.token) document.getElementById('problem').textContent = 'no Mapbox token: start the server with MAPBOX_ACCESS_TOKEN set';
   for (const id of ['graded', 'solid']) if (map.getLayer(id)) map.removeLayer(id);
   if (map.getSource('c')) map.removeSource('c');
   const make = (id, extra, zooms) => {
@@ -80,6 +81,12 @@ const maps = Object.keys(VARIANTS).map(variant => {
   const base = STYLES[basemapEl.value];
   const map = new mapboxgl.Map({ container: pane.querySelector('.map'), style: base.style, config: base.config, projection: 'globe', center: start.slice(0, 2), zoom: start[2], attributionControl: false });
   map.on('style.load', () => addLayers(map, variant));
+  // Say what failed instead of drawing nothing.
+  map.on('error', e => {
+    const text = `${variant}: ${(e.error && e.error.message) || e.message || 'error'}`;
+    document.getElementById('problem').textContent = text.slice(0, 220);
+    console.error(text, e);
+  });
   return map;
 });
 let syncing = false;
