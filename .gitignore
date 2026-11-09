@@ -165,3 +165,5 @@ cython_debug/
 .venv-places/
 
 .env.database.local
+.DS_Store
+.claude/settings.local.json
