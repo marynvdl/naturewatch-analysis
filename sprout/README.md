@@ -108,7 +108,7 @@ The finest zoom is not the source pixel. At zoom 12 one 256-pixel tile pixel is 
 
 Consequences for the version 2 tasks. Task 04's `max` against `q3` sample must be built from full-resolution pixels, not from the global COG's maximum overviews, or both samples will start from maximums. Facts is not affected, because it counts full-resolution pixels. Task 06 can read the global COG this year.
 
-## Per-tile run (version 2, next run)
+## Per-tile run (version 2)
 
 Replaces the global mosaic. Built on branch `sprout/cropland-2024-v2-per-tile`. Not yet run.
 
