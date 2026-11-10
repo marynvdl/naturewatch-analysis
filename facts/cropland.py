@@ -79,8 +79,9 @@ select
       )
     )
   ) as geom
-from public.pilot_places
-join public.places on places.id = pilot_places.id
+from public.protected_areas
+join public.places on places.id = protected_areas.id
+where protected_areas.iso3 = 'ZAF'
 order by places.area_km2, places.id
 """
 
@@ -750,7 +751,7 @@ def command_run(recipe: dict, scratch: str | None) -> None:
     require_sprout(dataset, recipe)
     places = load_places(database_url)
     if not places:
-        raise SystemExit("pilot_places returned no rows")
+        raise SystemExit("protected_areas returned no South Africa rows")
     print(f"places {len(places)}", flush=True)
     codes = class_codes(recipe)
     srs_wkt = wgs84_wkt()
