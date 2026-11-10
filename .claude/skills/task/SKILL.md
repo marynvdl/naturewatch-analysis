@@ -1,7 +1,7 @@
 ---
 name: task
-description: Start one pipeline task from docs/tasks. Use when Maryn says /task <file>, "do task NN", or "start the next task".
-argument-hint: <docs/tasks/task-file.md>
+description: Start one pipeline task. Its file is in ../naturewatch-app/docs/tasks. Use when the user says /task <file>, "do task NN", or "start the next task".
+argument-hint: <../naturewatch-app/docs/tasks/task-file.md>
 disable-model-invocation: true
 ---
 
@@ -9,8 +9,8 @@ disable-model-invocation: true
 
 Task file: $ARGUMENTS
 
-1. Read the task file and its parcel in `../naturewatch-app/docs/parcels/`. If no file was given, list the files in `docs/tasks/` and ask which one is meant.
-2. Check the task is marked for naturewatch-analysis. If it is for naturewatch-app, stop and say to run it from that checkout.
+1. Read the task file and its parcel in `../naturewatch-app/docs/parcels/`. If no file was given, list the analysis tasks in `../naturewatch-app/docs/tasks/` and ask which one is meant.
+2. Check the task is marked for naturewatch-analysis. If it is for naturewatch-app, do it in `../naturewatch-app`, following its CLAUDE.md and its task skill.
 3. Check the tasks above it in the parcel are ticked, and any "Start only after" condition is met. If not, stop and say what is missing.
 4. Check the working tree is clean. Then `git switch main`, `git pull --ff-only`, and create a branch named for the task.
 5. Read `docs/pipelines.md`, the recipe, and the step README the task names. Write a plan and wait for approval.

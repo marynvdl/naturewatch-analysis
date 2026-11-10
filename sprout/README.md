@@ -172,6 +172,6 @@ A first run of one dense tile is the cheap way to replace the guess with a measu
 
 - Facts, `facts/cropland.py`: `require_sprout` expects one COG's layout metadata, and `window_limits` opens one raster. It must open the VRT, or only the tiles a place touches.
 - Tiles, `tiles/cropland.py`: `materialize_sprout` copies one file. It must read the collection and build its own pyramid with the recipe's `tiles.resampling`.
-- Tasks 04 to 06 in `docs/tasks/` and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
+- Tasks 04 to 06 in `docs/tasks/` in the app repo, and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
 - The global mosaic code in `sprout/cropland.py` (`mosaic_canvas`, `write_mosaic_sprout`) is superseded and left in place. Remove it once the per-tile run is accepted.
 - Still to check: a VRT over private `/vsigs/` paths in both readers.

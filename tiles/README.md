@@ -507,7 +507,7 @@ What it looks like. The solid class tiles paint a flat orange mass. The graded p
 
 Cost, first pass, extrapolating the window ratios to the 1.95 GB class archive: about 6 GB with 15 steps, about 11 GB with 255. The next section brings that down to about 3.4 GB. Windows are cropland-dense, and the global archive is mostly uniform tiles stored once, so these are upper estimates. Storage is about $0.12 and $0.22 a month. A map view downloads 3–5 times the bytes. It would be a rebuild from the sprout (v2 cost about $1 and 3 hours in Batch), not a transcode, so it needs its own approval, and 512 px tiles would come from the same build.
 
-**Decision, 8 November 2026 (Maryn): option B2.** Share tiles, 8 shades spaced in √share, top zoom solid, 512 px tiles. Version 3 is therefore a rebuild from the sprout, not a transcode of v2, and it is task 09b ([`docs/tasks/task-09b-cropland-share-tiles-v3.md`](../docs/tasks/task-09b-cropland-share-tiles-v3.md)). Task 09 stage 2 as written (v3 equals v2 pixel for pixel) is not run.
+**Decision, 8 November 2026 (the user): option B2.** Share tiles, 8 shades spaced in √share, top zoom solid, 512 px tiles. Version 3 is therefore a rebuild from the sprout, not a transcode of v2, and it is task 09b ([`task-09b-cropland-share-tiles-v3.md`](https://github.com/marynvdl/naturewatch-app/blob/develop/docs/archive/tasks/task-09b-cropland-share-tiles-v3.md) in the app repo). Task 09 stage 2 as written (v3 equals v2 pixel for pixel) is not run.
 
 ### Version 3 published (task 09b, 8 November 2026)
 
