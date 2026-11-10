@@ -11,7 +11,7 @@ Write each fact once.
 - `docs/pipelines.md`: how a dataset becomes published objects, including transformations, cloud costs, and scripts.
 - `cookbook/recipes/`: the hand-edited layer catalog.
 - The step README (`seed/`, `sprout/`, `tiles/`, `facts/`, `places/`, `gee/`): how to run that step, and what the run cost.
-- `docs/tasks/`: the active task files. Their parcels live in `../naturewatch-app/docs/parcels/`.
+- Task files and their parcels live in naturewatch-app: `../naturewatch-app/docs/tasks/` and `../naturewatch-app/docs/parcels/`, archived under `docs/archive/` there.
 - In naturewatch-app: `docs/blueprint.md` for tables, bucket paths, and how the app reads layers, and `docs/archive/sooty-earth-roadmap.md` for the 20 October 2026 plan.
 
 ## Tasks
@@ -40,11 +40,11 @@ Keep geospatial figures exact: square kilometres, percentages, and valid coverag
 
 ## Secrets
 
-Never commit or expose a service-account JSON key, a private key, a bucket access token, or a database password. Reference credentials only through environment variables. If a raw token or key is exposed, stop and tell Maryn so it can be rotated.
+Never commit or expose a service-account JSON key, a private key, a bucket access token, or a database password. Reference credentials only through environment variables. If a raw token or key is exposed, stop and tell the user so it can be rotated.
 
 ## Git
 
-Branch from `main`. When a task passes local checks, commit only its files, push the branch, and open a pull request into `main`. Report the pull request and its checks. Do not merge until the checks pass and Maryn says so.
+Branch from `main`. When a task passes local checks, commit only its files, push the branch, and open a pull request into `main`. Report the pull request and its checks. Do not merge until the checks pass and the user says so.
 
 In the app repo, do not open or merge a pull request from `develop` into `main` until a production release is explicitly requested.
 
