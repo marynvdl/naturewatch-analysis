@@ -1,10 +1,12 @@
-# Facts
+# Stats
 
-How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the cropland 2024 run.
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the cropland 2024 run. The folder was `facts/` until Database Honing task 07. The Stats Pipeline is paused: do not submit a run until a later parcel resumes it.
 
-Counts the sprout raster inside each pilot place and writes one row to `facts`. The recipe is the catalog. This script reads it and does not edit it. The published run is a Google Batch job in `europe-west1`, started by hand. There is no orchestrator in this release, and no GitHub workflow for this step. Batch deletes the virtual machine when the task ends.
+Counts the sprout raster inside the current boundary of each South Africa conservation area in the app's `listed_places`, and writes three `place_stats` rows per place in one `stat_runs` row. The recipe is the catalog. This script reads it and does not edit it. The published run is a Google Batch job in `europe-west1`, started by hand. There is no orchestrator in this release, and no GitHub workflow for this step. Batch deletes the virtual machine when the task ends.
 
-The hosted run is recorded below. It stored 941 rows.
+The hosted run of 22 October 2026 is recorded below. It wrote 941 rows to `facts`, before `place_stats` existed. App task 07 copied them as 2,823 `place_stats` rows of one run on each place's version 1 boundary.
+
+A run first refuses unless the sprout is in `sprouts` and the method is in `stat_methods` with this script's summary. The app's migrations register both. It then stores a `running` run with its selection, the Batch job id, and the commit, and commits it. Every value and the run's `succeeded` status are written in one transaction. If anything fails after the run is stored, the run becomes `failed`, and no values are kept. `submit` stops when `stats/` or `cookbook/` has uncommitted changes, so the stored commit is what ran.
 
 ## Overlap
 
@@ -14,21 +16,21 @@ Count each place on its own. Ground shared by two places stays in both rows. A t
 
 The sprout is `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif`. The job reads its `version` and `class_values` metadata and stops if they differ from the recipe.
 
-| Column | Value |
+Each place gets one row per stat, on its current boundary, for the sprout's period (2024), with sprout `cropland-2024-v1` and method `area-weighted-spheroid-v1`.
+
+| `stat_id` | Value |
 | --- | --- |
-| `sprout_id` | `cropland-2024-v1` |
-| `method_id` | `area-weighted-spheroid-v1` |
-| `area_km2` | Cropland inside the place, in km² |
-| `percent` | `100 × area_km2 / valid km²`, or `0` when the valid area is `0` |
-| `valid_coverage` | `valid km² / places.area_km2` |
+| `crops_area` | Cropland inside the boundary, in km² |
+| `crops_percent` | `100 × crops_area / valid km²`, or `0` when the valid area is `0` |
+| `valid_coverage` | `valid km² / place_boundaries.area_km2` |
 
-Valid square kilometres are the same pixel sum for values `0` and `1`. Value `255` and pixels outside the raster are left out. They are not a stored column. `valid_coverage × places.area_km2` returns them.
+Valid square kilometres are the same pixel sum for values `0` and `1`. Value `255` and pixels outside the raster are left out. They are not a stored stat. `valid_coverage × place_boundaries.area_km2` returns them.
 
-A pixel contributes the fraction of its area inside the place, multiplied by the WGS84 spheroidal area of the whole pixel. That is the same spheroid as `places.area_km2`. The raster is not resampled. The count uses the full-resolution pixels.
+A pixel contributes the fraction of its area inside the boundary, multiplied by the WGS84 spheroidal area of the whole pixel. That is the same spheroid as `place_boundaries.area_km2`. The raster is not resampled. The count uses the full-resolution pixels.
 
 The three numbers are stored at full precision. Shown square kilometres use two decimal places, which is one hectare. Percent uses one decimal place. Valid coverage uses three decimal places.
 
-`fact_methods.summary` carries this formula. The app migration is `supabase/migrations/20261022190000_fact_methods.sql` in `naturewatch-app`. It is applied on the hosted database.
+`stat_methods.summary` carries this formula (`fact_methods` until app task 07). The app migration that added it is `supabase/migrations/20261022190000_fact_methods.sql` in `naturewatch-app`.
 
 ## Independent check
 
@@ -53,8 +55,8 @@ Run on 22 October 2026. The stored figure is the area-weighted count. The other 
 The laptop needs the GDAL Python bindings. From the repository root, with the virtualenv that already has them:
 
 ```bash
-.venv/bin/pip install -r cookbook/requirements.txt -r facts/requirements.txt
-.venv/bin/python -m pytest facts
+.venv/bin/pip install -r cookbook/requirements.txt -r stats/requirements.txt
+.venv/bin/python -m pytest stats
 ```
 
 `pytest` uses a few synthetic pixels. It does not read the South Africa raster and it does not write to the database.
@@ -62,7 +64,7 @@ The laptop needs the GDAL Python bindings. From the repository root, with the vi
 The pilot run is the Batch job. Export `DATABASE_URL` for the command below, the same variable as the place import. Do not commit it. This creates secret `naturewatch-facts-database-url` in `europe-west1`, grants the Batch service account access, and submits one spot `e2-standard-4`. The database URL is not stored in the job spec.
 
 ```bash
-python facts/cropland.py submit
+python stats/cropland.py submit
 ```
 
 ## Cost for this step

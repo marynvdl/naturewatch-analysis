@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Count cropland 2024 inside each pilot place and store the facts.
+"""Count cropland 2024 inside each South Africa conservation area and store the stats.
 
 The recipe is the catalog. This script reads it and does not edit it.
-area_km2, percent, and valid_coverage are written at full precision.
+Each place gets crops_area, crops_percent, and valid_coverage in place_stats,
+at full precision, on its current boundary, in one stat_runs row.
 The published run is a Batch job in europe-west1. The laptop only submits
-that job.
+that job. The Stats Pipeline is paused: do not submit until it resumes.
 
-  python facts/cropland.py submit
+  python stats/cropland.py submit
 """
 from __future__ import annotations
 
@@ -44,9 +45,9 @@ REGION = "europe-west1"
 IMAGE = "ghcr.io/osgeo/gdal:ubuntu-small-3.11.4"
 MACHINE = "e2-standard-4"
 SERVICE_ACCOUNT = "637146989512-compute@developer.gserviceaccount.com"
-SCRATCH = "gs://nature-watch-bucket/scratch/facts/cropland-2024/"
+SCRATCH = "gs://nature-watch-bucket/scratch/stats/cropland-2024/"
 SECRET = "naturewatch-facts-database-url"
-BATCH_ENV = "NATUREWATCH_FACTS_BATCH"
+BATCH_ENV = "NATUREWATCH_STATS_BATCH"
 MAX_WINDOW_PIXELS = 8_000_000
 INTERSECTION_TOLERANCE_KM2 = 0.01
 PIXEL_CENTER_RELATIVE_TOLERANCE = 0.01
@@ -66,50 +67,79 @@ METHOD_SUMMARY = (
     "Shown square kilometres use two decimal places (one hectare), percent uses one decimal place, and valid coverage uses three decimal places."
 )
 
+# The current boundary of each published conservation area listed for South Africa.
+# listed_places is the app's list rule: terrestrial, at least 10 km2.
 PILOT_SQL = """
 select
-  places.id::text as id,
-  places.name,
-  places.area_km2,
+  listed.id::text as id,
+  boundary.id::text as boundary_id,
+  listed.name,
+  boundary.area_km2,
   extensions.ST_AsEWKB(
     extensions.ST_Multi(
       extensions.ST_CollectionExtract(
-        extensions.ST_MakeValid(places.geom),
+        extensions.ST_MakeValid(boundary.geom),
         3
       )
     )
   ) as geom
-from public.protected_areas
-join public.places on places.id = protected_areas.id
-where protected_areas.iso3 = 'ZAF'
-order by places.area_km2, places.id
+from public.listed_places as listed
+join public.place_boundaries as boundary
+  on boundary.place_id = listed.id
+ and boundary.is_current
+where listed.place_type_id = 'conservation_area'
+  and listed.iso3 = 'ZAF'
+order by boundary.area_km2, listed.id
 """
 
-UPSERT_METHOD = """
-insert into public.fact_methods (id, summary)
-values (%s, %s)
-on conflict (id) do update set summary = excluded.summary
+SELECTION = {"place_type": "conservation_area", "iso3": "ZAF", "list": "listed_places"}
+
+# The sprout and the method are registered by the app's migrations, not here.
+SPROUT_SQL = """
+select period_start, period_end
+from public.sprouts
+where id = %s
 """
 
-UPSERT_FACT = """
-insert into public.facts (
-  place_id, sprout_id, method_id, area_km2, percent, valid_coverage
+METHOD_SQL = """
+select summary
+from public.stat_methods
+where id = %s
+"""
+
+INSERT_RUN = """
+insert into public.stat_runs (
+  sprout_id, stat_method_id, selection, boundary_count, code_version,
+  batch_job_id, status, started_at
 ) values (
-  %s::uuid, %s, %s, %s, %s, %s
+  %s, %s, %s::jsonb, %s, %s, %s, 'running', now()
 )
-on conflict (place_id, sprout_id, method_id) do update set
-  area_km2 = excluded.area_km2,
-  percent = excluded.percent,
-  valid_coverage = excluded.valid_coverage
+returning id::text as id
 """
 
-COUNT_FACTS = """
-select count(*) as stored
-from public.facts
-where sprout_id = %s
-  and method_id = %s
-  and place_id = any(%s::uuid[])
+INSERT_STAT = """
+insert into public.place_stats (
+  stat_run_id, sprout_id, stat_method_id, place_id, boundary_id, stat_id,
+  period_start, period_end, value, calculated_at
+) values (
+  %s::uuid, %s, %s, %s::uuid, %s::uuid, %s, %s, %s, %s, now()
+)
 """
+
+FINISH_RUN = """
+update public.stat_runs
+set status = %s, finished_at = now()
+where id = %s::uuid
+  and status = 'running'
+"""
+
+COUNT_STATS = """
+select count(*) as stored
+from public.place_stats
+where stat_run_id = %s::uuid
+"""
+
+STAT_IDS = ("crops_area", "crops_percent", "valid_coverage")
 
 _GEOD = Geod(ellps="WGS84")
 
@@ -124,6 +154,7 @@ class ClassCodes:
 @dataclass(frozen=True)
 class Place:
     id: str
+    boundary_id: str
     name: str
     area_km2: float
     geom: MultiPolygon
@@ -200,7 +231,7 @@ def pixel_area_km2(lon_width: float, lat_south: float, lat_north: float) -> floa
     return abs(area_m2) / 1e6
 
 
-def fact_values(cropland_km2: float, valid_km2: float, place_area_km2: float) -> tuple[float, float, float]:
+def stat_values(cropland_km2: float, valid_km2: float, place_area_km2: float) -> tuple[float, float, float]:
     """Full-precision area_km2, percent, and valid_coverage. Nothing is rounded."""
     percent = 0.0 if valid_km2 == 0 else 100.0 * cropland_km2 / valid_km2
     coverage = 0.0 if place_area_km2 == 0 else valid_km2 / place_area_km2
@@ -546,7 +577,7 @@ def connect(database_url: str):
     try:
         return psycopg.connect(
             database_url,
-            application_name="naturewatch-facts-cropland-2024",
+            application_name="naturewatch-stats-cropland-2024",
             connect_timeout=30,
             row_factory=dict_row,
         )
@@ -564,25 +595,68 @@ def load_places(database_url: str) -> list[Place]:
             geom = polygonal(from_wkb(bytes(row["geom"])))
         except Exception as exc:
             raise SystemExit(f"{row['name']} ({row['id']}) geometry cannot be used: {exc}") from None
-        places.append(Place(row["id"], row["name"], float(row["area_km2"]), geom))
+        places.append(Place(row["id"], row["boundary_id"], row["name"], float(row["area_km2"]), geom))
     return places
 
 
-def save_facts(database_url: str, recipe: dict, results: list[PlaceResult]) -> None:
+def require_registered(database_url: str, recipe: dict) -> tuple:
+    """The sprout's period. Stops unless the sprout and the method are registered."""
+    sprout = sprout_id(recipe)
+    with connect(database_url) as conn:
+        period = conn.execute(SPROUT_SQL, (sprout,)).fetchone()
+        method = conn.execute(METHOD_SQL, (METHOD_ID,)).fetchone()
+    if period is None:
+        raise SystemExit(f"sprout {sprout} is not in public.sprouts")
+    if method is None:
+        raise SystemExit(f"method {METHOD_ID} is not in public.stat_methods")
+    if method["summary"] != METHOD_SUMMARY:
+        raise SystemExit(f"method {METHOD_ID} in public.stat_methods has another summary")
+    return period["period_start"], period["period_end"]
+
+
+def start_run(database_url: str, recipe: dict, places: list[Place], job_id: str | None, code_version: str | None) -> str:
+    """Store a running stat_runs row in its own transaction, so a failure can be recorded."""
+    with connect(database_url) as conn:
+        with conn.transaction():
+            row = conn.execute(
+                INSERT_RUN,
+                (sprout_id(recipe), METHOD_ID, json.dumps(SELECTION), len(places), code_version, job_id),
+            ).fetchone()
+    return row["id"]
+
+
+def stat_rows(run_id: str, recipe: dict, period: tuple, results: list[PlaceResult]) -> list[tuple]:
     sprout = sprout_id(recipe)
     rows = []
     for item in results:
-        area_km2, percent, coverage = fact_values(item.cropland_km2, item.valid_km2, item.place.area_km2)
-        rows.append((item.place.id, sprout, METHOD_ID, area_km2, percent, coverage))
-    place_ids = [item.place.id for item in results]
+        values = stat_values(item.cropland_km2, item.valid_km2, item.place.area_km2)
+        for stat, value in zip(STAT_IDS, values):
+            rows.append(
+                (run_id, sprout, METHOD_ID, item.place.id, item.place.boundary_id, stat, period[0], period[1], value)
+            )
+    return rows
+
+
+def save_stats(database_url: str, run_id: str, rows: list[tuple]) -> None:
+    """Every value and the run's success in one transaction."""
     with connect(database_url) as conn:
         with conn.transaction():
-            conn.execute(UPSERT_METHOD, (METHOD_ID, METHOD_SUMMARY))
             with conn.cursor() as cursor:
-                cursor.executemany(UPSERT_FACT, rows)
-            stored = conn.execute(COUNT_FACTS, (sprout, METHOD_ID, place_ids)).fetchone()["stored"]
-            if stored != len(results):
-                raise SystemExit(f"stored {stored} facts for {len(results)} places")
+                cursor.executemany(INSERT_STAT, rows)
+            stored = conn.execute(COUNT_STATS, (run_id,)).fetchone()["stored"]
+            if stored != len(rows):
+                raise SystemExit(f"stored {stored} stats, expected {len(rows)}")
+            if conn.execute(FINISH_RUN, ("succeeded", run_id)).rowcount != 1:
+                raise SystemExit(f"run {run_id} is no longer running")
+
+
+def fail_run(database_url: str, run_id: str) -> None:
+    try:
+        with connect(database_url) as conn:
+            with conn.transaction():
+                conn.execute(FINISH_RUN, ("failed", run_id))
+    except BaseException as exc:  # The original error matters more.
+        print(f"run {run_id} could not be marked failed: {type(exc).__name__}", flush=True)
 
 
 def fetch_database_url() -> str:
@@ -620,7 +694,7 @@ def delete_scratch(prefix: str) -> None:
             print(f"scratch object left in place: {gs_join(prefix, name)}", flush=True)
 
 
-def batch_commands(script_prefix: str) -> str:
+def batch_commands(script_prefix: str, job_id: str, code_version: str) -> str:
     prefix = script_prefix.removeprefix("gs://").rstrip("/")
     fetch = r"""python3 - << 'PY'
 import json
@@ -651,11 +725,12 @@ PY
         + "DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip\n"
         + "python3 -m pip install --break-system-packages -r /tmp/in/requirements.txt "
         + "|| python3 -m pip install -r /tmp/in/requirements.txt\n"
-        + f"python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json --scratch {script_prefix}\n"
+        + "python3 /tmp/in/cropland.py run --recipe /tmp/in/recipe.json"
+        + f" --scratch {script_prefix} --job-id {job_id} --code-version {code_version}\n"
     )
 
 
-def batch_job(script_prefix: str) -> dict:
+def batch_job(script_prefix: str, job_id: str, code_version: str) -> dict:
     """One spot VM in europe-west1. Batch deletes it when the task ends."""
     return {
         "taskGroups": [
@@ -671,7 +746,7 @@ def batch_job(script_prefix: str) -> dict:
                             "container": {
                                 "imageUri": IMAGE,
                                 "entrypoint": "sh",
-                                "commands": ["-c", batch_commands(script_prefix)],
+                                "commands": ["-c", batch_commands(script_prefix, job_id, code_version)],
                             }
                         }
                     ],
@@ -736,11 +811,11 @@ def ensure_secret(database_url: str) -> None:
     )
 
 
-def command_run(recipe: dict, scratch: str | None) -> None:
+def command_run(recipe: dict, scratch: str | None, job_id: str | None, code_version: str | None) -> None:
     if os.environ.get(BATCH_ENV) != "1":
         raise SystemExit(
-            "The facts run is the Batch job in europe-west1. "
-            "From this computer, use: python facts/cropland.py submit"
+            "The stats run is the Batch job in europe-west1. "
+            "From this computer, use: python stats/cropland.py submit"
         )
     database_url = os.environ.get("DATABASE_URL") or fetch_database_url()
     gdal.SetCacheMax(512 * 1024 * 1024)
@@ -749,29 +824,51 @@ def command_run(recipe: dict, scratch: str | None) -> None:
     if dataset is None:
         raise SystemExit(f"cannot open {raster_path}")
     require_sprout(dataset, recipe)
+    period = require_registered(database_url, recipe)
     places = load_places(database_url)
     if not places:
-        raise SystemExit("protected_areas returned no South Africa rows")
+        raise SystemExit("listed_places returned no South Africa rows")
     print(f"places {len(places)}", flush=True)
-    codes = class_codes(recipe)
-    srs_wkt = wgs84_wkt()
-    results = []
-    counted = 0.0
-    for index, place in enumerate(places, start=1):
-        started = time.perf_counter()
-        cropland, valid = summarize_exact(dataset, place.geom, codes, srs_wkt)
-        seconds = time.perf_counter() - started
-        counted += seconds
-        results.append(PlaceResult(place, cropland, valid, seconds))
-        print(f"count {index}/{len(places)} {seconds:.1f}s {place.area_km2:.2f} {place.name}", flush=True)
-    report_dominance(results, counted)
-    check_results(dataset, results, codes, srs_wkt)
-    print("checks passed", flush=True)
-    save_facts(database_url, recipe, results)
-    print(f"stored {len(results)}", flush=True)
+    run_id = start_run(database_url, recipe, places, job_id, code_version)
+    print(f"run {run_id}", flush=True)
+    try:
+        codes = class_codes(recipe)
+        srs_wkt = wgs84_wkt()
+        results = []
+        counted = 0.0
+        for index, place in enumerate(places, start=1):
+            started = time.perf_counter()
+            cropland, valid = summarize_exact(dataset, place.geom, codes, srs_wkt)
+            seconds = time.perf_counter() - started
+            counted += seconds
+            results.append(PlaceResult(place, cropland, valid, seconds))
+            print(f"count {index}/{len(places)} {seconds:.1f}s {place.area_km2:.2f} {place.name}", flush=True)
+        report_dominance(results, counted)
+        check_results(dataset, results, codes, srs_wkt)
+        print("checks passed", flush=True)
+        rows = stat_rows(run_id, recipe, period, results)
+        save_stats(database_url, run_id, rows)
+    except BaseException:
+        fail_run(database_url, run_id)
+        raise
+    print(f"stored {len(rows)} stats for {len(results)} places", flush=True)
     if scratch:
         delete_scratch(scratch)
     dataset = None
+
+
+def code_version() -> str:
+    """The commit the job runs. Stops if the script or the recipes have uncommitted changes."""
+    dirty = subprocess.run(
+        ["git", "-C", str(ROOT), "status", "--porcelain", "--", "stats", "cookbook"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    if dirty:
+        raise SystemExit("stats/ or cookbook/ has uncommitted changes. Commit them before a run.")
+    return subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
 
 def command_submit(recipe_path: Path) -> None:
@@ -780,17 +877,18 @@ def command_submit(recipe_path: Path) -> None:
         raise SystemExit("DATABASE_URL is not set. Export it for this command. Do not commit it.")
     recipe = load_recipe(recipe_path)
     version = version_of(recipe)
-    job_id = f"facts-{recipe['id']}-{version}-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}"
+    commit = code_version()
+    job_id = f"stats-{recipe['id']}-{version}-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}"
     gcloud(["services", "enable", "batch.googleapis.com", "secretmanager.googleapis.com"])
     ensure_secret(database_url)
-    work = ROOT / "data" / "facts" / recipe["id"]
+    work = ROOT / "data" / "stats" / recipe["id"]
     work.mkdir(parents=True, exist_ok=True)
     recipe_json = work / "recipe.json"
     recipe_json.write_text(json.dumps(recipe) + "\n")
     upload_with_gcloud(Path(__file__).resolve(), gs_join(SCRATCH, "cropland.py"))
-    upload_with_gcloud(ROOT / "facts" / "requirements.txt", gs_join(SCRATCH, "requirements.txt"))
+    upload_with_gcloud(ROOT / "stats" / "requirements.txt", gs_join(SCRATCH, "requirements.txt"))
     upload_with_gcloud(recipe_json, gs_join(SCRATCH, "recipe.json"))
-    config = batch_job(SCRATCH)
+    config = batch_job(SCRATCH, job_id, commit)
     config_path = work / "batch_job.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     print(config_path.read_text(), flush=True)
@@ -811,13 +909,15 @@ def main() -> None:
     parser.add_argument("command", choices=("run", "submit"))
     parser.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
     parser.add_argument("--scratch", default=None)
+    parser.add_argument("--job-id", default=None)
+    parser.add_argument("--code-version", default=None)
     args = parser.parse_args()
     started = time.perf_counter()
     try:
         if args.command == "submit":
             command_submit(args.recipe)
         else:
-            command_run(load_recipe(args.recipe), args.scratch)
+            command_run(load_recipe(args.recipe), args.scratch, args.job_id, args.code_version)
     finally:
         elapsed = time.perf_counter() - started
         print(f"wall_seconds {elapsed:.1f}")
