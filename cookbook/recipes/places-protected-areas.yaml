@@ -1,15 +1,20 @@
 # Hand-edited catalog for the protected-area boundary archive.
 # The Places pipeline reads this recipe. It does not edit it.
-# Geometries come from the app database, not from a seed raster.
+# Geometries come from the app database, not from a seed raster: the current
+# boundary in public.place_boundaries of each published place of this type.
 id: places-protected-areas
 title: Protected-area boundaries
 kind: places
 source:
-  table: public.places
-  geom: places.geom
-facts:
-  sprout_id: cropland-2024-v1
-  method_id: area-weighted-spheroid-v1
+  boundaries: current
+  publication_status: published
+  place_type: conservation_area
+# Read from public.place_stats_preferred. Its sprout and method are the app's
+# stat_selections row for this stat and period.
+stats:
+  cropland_percent:
+    stat_id: crops_percent
+    period_start: "2024-01-01"
 tiles:
   path: gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles
   layer: places

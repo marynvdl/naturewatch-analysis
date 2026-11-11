@@ -111,23 +111,40 @@ def test_the_recipe_names_the_protected_areas_archive():
     assert contract["layer"] == "places"
     assert contract["min_zoom"] == 0
     assert contract["max_zoom"] == 12
-    assert contract["sprout_id"] == "cropland-2024-v1"
-    assert contract["method_id"] == "area-weighted-spheroid-v1"
+    assert contract["place_type"] == "conservation_area"
+    assert contract["crops_stat_id"] == "crops_percent"
+    assert contract["crops_period_start"] == "2024-01-01"
 
 
-def test_the_query_reads_places_geom_and_the_stored_cropland_fact():
-    assert "from public.places" in places.PLACES_SQL
-    assert "places.geom" in places.PLACES_SQL
-    assert "pilot_place_map" not in places.PLACES_SQL
-    assert "anon" not in places.PLACES_SQL
-    assert "facts.percent" in places.PLACES_SQL
-    assert "sprout_id" in places.PLACES_SQL
-    assert "ST_AsBinary" in places.PLACES_SQL
-    assert "ST_AsEWKB" not in places.PLACES_SQL
+def test_the_recipe_must_read_current_boundaries_of_published_places():
+    recipe = {**RECIPE, "source": {"boundaries": "all", "publication_status": "published", "place_type": "x"}}
+    with pytest.raises(ValueError, match="current boundaries"):
+        places.places_contract(recipe)
+    recipe = {**RECIPE, "stats": {}}
+    with pytest.raises(ValueError, match="stats.cropland_percent"):
+        places.places_contract(recipe)
+
+
+def test_the_query_reads_current_boundaries_and_the_preferred_cropland_stat():
+    sql = places.PLACES_SQL
+    assert "from public.place_boundaries as boundary" in sql
+    assert "where boundary.is_current" in sql
+    assert "places.publication_status = 'published'" in sql
+    assert "places.place_type_id = %(place_type)s" in sql
+    assert "public.place_stats_preferred" in sql
+    assert "crops.boundary_id = boundary.id" in sql
+    assert "crops.period_start" in sql
+    assert "places.geom" not in sql
+    assert "facts" not in sql
+    assert "boundary.geom" in places.BBOX_SQL
+    assert "places.geom" not in places.VALID_SQL
+    assert "anon" not in sql
+    assert "ST_AsBinary" in sql
+    assert "ST_AsEWKB" not in sql
     # The app database does not validate rows. OGR does that on the build machine.
-    assert "ST_MakeValid(places.geom" not in places.PLACES_SQL
-    assert "ST_CollectionExtract" not in places.PLACES_SQL
-    assert "order by" not in places.PLACES_SQL
+    assert "ST_MakeValid" not in sql
+    assert "ST_CollectionExtract" not in sql
+    assert "order by" not in sql
 
 
 def test_places_are_read_with_a_server_side_cursor():

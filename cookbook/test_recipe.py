@@ -43,9 +43,13 @@ def test_the_places_recipe_names_the_protected_areas_archive():
     recipe = dict(load_recipes())["places-protected-areas.yaml"]
     assert recipe["id"] == "places-protected-areas"
     assert recipe["kind"] == "places"
-    assert recipe["source"]["table"] == "public.places"
-    assert recipe["facts"]["sprout_id"] == "cropland-2024-v1"
-    assert recipe["facts"]["method_id"] == "area-weighted-spheroid-v1"
+    assert recipe["source"] == {
+        "boundaries": "current",
+        "publication_status": "published",
+        "place_type": "conservation_area",
+    }
+    assert "facts" not in recipe
+    assert recipe["stats"]["cropland_percent"] == {"stat_id": "crops_percent", "period_start": "2024-01-01"}
     assert recipe["tiles"]["path"] == (
         "gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles"
     )

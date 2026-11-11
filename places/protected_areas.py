@@ -2,8 +2,9 @@
 """Build the protected-area PMTiles archive from the app database.
 
 The recipe is the catalog. This script reads it and does not edit it.
-Each feature carries places.id, area_km2, and cropland percent when a fact
-exists. Colour is applied in the client. The tile engine is Tippecanoe
+Each feature is the current boundary of a published place of the recipe's
+type. It carries places.id, the boundary's area_km2, and the cropland percent
+when place_stats_preferred has one. Colour is applied in the client. The tile engine is Tippecanoe
 (felt/tippecanoe 2.x), which streams newline-delimited GeoJSON and writes
 PMTiles directly. GDAL and OGR read, validate, and prove the archive.
 A laptop prove writes a local archive and does not upload. The hosted
@@ -109,6 +110,14 @@ def places_contract(recipe: dict) -> dict:
     bands = tiles.get("minzoom_by_area_km2") or []
     if not bands:
         problems.append("tiles.minzoom_by_area_km2 is missing")
+    source = recipe.get("source") or {}
+    if source.get("boundaries") != "current" or source.get("publication_status") != "published":
+        problems.append("source must be the current boundaries of published places")
+    if not source.get("place_type"):
+        problems.append("source.place_type is missing")
+    crops = (recipe.get("stats") or {}).get("cropland_percent") or {}
+    if not crops.get("stat_id") or not crops.get("period_start"):
+        problems.append("stats.cropland_percent needs stat_id and period_start")
     if problems:
         raise ValueError("; ".join(problems))
     return {
@@ -120,8 +129,9 @@ def places_contract(recipe: dict) -> dict:
         "minzoom_by_area_km2": [
             (float(band["area_km2"]), int(band["minzoom"])) for band in bands
         ],
-        "sprout_id": str(recipe["facts"]["sprout_id"]),
-        "method_id": str(recipe["facts"]["method_id"]),
+        "place_type": str(source["place_type"]),
+        "crops_stat_id": str(crops["stat_id"]),
+        "crops_period_start": str(crops["period_start"]),
     }
 
 
@@ -194,28 +204,36 @@ def places_from_file(path: Path) -> Iterator[PlaceFeature]:
 # geometry in database memory.
 PLACES_SQL = """
 select
-  places.id::text as id,
-  places.area_km2,
-  facts.percent as cropland_percent,
-  extensions.ST_AsBinary(places.geom) as geom
-from public.places
-left join public.facts
-  on facts.place_id = places.id
- and facts.sprout_id = %(sprout_id)s
- and facts.method_id = %(method_id)s
-where places.geom is not null
+  boundary.place_id::text as id,
+  boundary.area_km2,
+  crops.value as cropland_percent,
+  extensions.ST_AsBinary(boundary.geom) as geom
+from public.place_boundaries as boundary
+join public.places
+  on places.id = boundary.place_id
+ and places.publication_status = 'published'
+ and places.place_type_id = %(place_type)s
+left join public.place_stats_preferred as crops
+  on crops.boundary_id = boundary.id
+ and crops.stat_id = %(crops_stat_id)s
+ and crops.period_start = %(crops_period_start)s::date
+where boundary.is_current
 {bbox}
 """
 
-BBOX_SQL = "and places.geom && extensions.ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)"
+BBOX_SQL = "and boundary.geom && extensions.ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)"
 
 VALID_SQL = """
 select
   count(*) as places,
-  count(*) filter (where not extensions.ST_IsValid(geom)) as invalid,
-  count(*) filter (where extensions.GeometryType(geom) not in ('POLYGON', 'MULTIPOLYGON')) as not_polygonal
-from public.places
-where geom is not null
+  count(*) filter (where not extensions.ST_IsValid(boundary.geom)) as invalid,
+  count(*) filter (where extensions.GeometryType(boundary.geom) not in ('POLYGON', 'MULTIPOLYGON')) as not_polygonal
+from public.place_boundaries as boundary
+join public.places
+  on places.id = boundary.place_id
+ and places.publication_status = 'published'
+ and places.place_type_id = %(place_type)s
+where boundary.is_current
 """
 
 
@@ -244,10 +262,11 @@ def parse_bbox(text: str | None) -> tuple[float, float, float, float] | None:
     return west, south, east, north
 
 
-def command_check_valid(database_url: str) -> None:
-    """Count invalid and non-polygonal stored geometries. Counts only, no geometry leaves."""
+def command_check_valid(database_url: str, recipe: dict) -> None:
+    """Count invalid and non-polygonal current boundaries. Counts only, no geometry leaves."""
+    contract = places_contract(recipe)
     with connect(database_url) as conn:
-        row = conn.execute(VALID_SQL).fetchone()
+        row = conn.execute(VALID_SQL, {"place_type": contract["place_type"]}).fetchone()
     print(f"places {row['places']}", flush=True)
     print(f"invalid {row['invalid']}", flush=True)
     print(f"not_polygonal {row['not_polygonal']}", flush=True)
@@ -261,7 +280,11 @@ def stream_places(
 ) -> Iterator[PlaceFeature]:
     """Yield places from a server-side cursor. Memory does not grow with place count."""
     contract = places_contract(recipe)
-    params: dict = {"sprout_id": contract["sprout_id"], "method_id": contract["method_id"]}
+    params: dict = {
+        "place_type": contract["place_type"],
+        "crops_stat_id": contract["crops_stat_id"],
+        "crops_period_start": contract["crops_period_start"],
+    }
     clause = ""
     if bbox:
         clause = BBOX_SQL
@@ -375,7 +398,7 @@ def ids_by_zoom(path: Path, zoom: int) -> dict[str, dict]:
     found: dict[str, dict] = {}
     for index in range(dataset.GetLayerCount()):
         layer = dataset.GetLayer(index)
-        # A layer with no cropland fact anywhere has no such field.
+        # A layer with no cropland percent anywhere has no such field.
         has_crop = layer.GetLayerDefn().GetFieldIndex("cropland_percent") >= 0
         for feature in layer:
             place_id = str(feature.GetField("id"))
@@ -987,7 +1010,7 @@ def main() -> None:
             database_url = os.environ.get("DATABASE_URL")
             if not database_url:
                 raise SystemExit("DATABASE_URL is not set. Export it for this command. Do not commit it.")
-            command_check_valid(database_url)
+            command_check_valid(database_url, load_recipe(args.recipe))
             return
         recipe = load_recipe(args.recipe)
         if args.command == "submit":
