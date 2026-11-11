@@ -10,7 +10,7 @@ Write each fact once.
 
 - `docs/pipelines.md`: how a dataset becomes published objects, including transformations, cloud costs, and scripts.
 - `cookbook/recipes/`: the hand-edited layer catalog.
-- The step README (`seed/`, `sprout/`, `tiles/`, `facts/`, `places/`, `gee/`): how to run that step, and what the run cost.
+- The step README (`seed/`, `sprout/`, `tiles/`, `stats/`, `places/`, `gee/`): how to run that step, and what the run cost.
 - Task files and their parcels live in naturewatch-app: `../naturewatch-app/docs/tasks/` and `../naturewatch-app/docs/parcels/`, archived under `docs/archive/` there.
 - In naturewatch-app: `docs/blueprint.md` for tables, bucket paths, and how the app reads layers, and `docs/archive/sooty-earth-roadmap.md` for the 20 October 2026 plan.
 

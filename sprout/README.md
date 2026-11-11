@@ -100,13 +100,13 @@ Decided on 30 October 2026, while job `cropland-2024-v2` was running. This is no
 1. **One Sprout COG per geographic tile, not one global mosaic.** Each of the 223 seed tiles becomes its own COG at a path named from the recipe. The tiles already sit on whole-pixel offsets, which `mosaic_canvas` checks today.
 2. **Sprout keeps the full-resolution classification only.** It remaps `0` and `100` to `0` and `1` and keeps nodata `255`. It does not decide how a map should be drawn, so it carries no maximum or `q3` overviews. By default a Sprout tile has no overviews. A different overview method needs its own decision.
 3. **Resampling moves to the Tiles pipeline.** Tiles builds its own pyramid from the full-resolution pixels with the method chosen in task 04, `max` or `q3`. The recipe's `tiles.resampling` field is the only place that choice lives. Overviews written by a Sprout run must not set it by accident. A Warp that reads a Sprout overview takes a quartile of values that were already maximums.
-4. **Facts and Tiles read a collection of Sprout COGs**, through a VRT or an explicit list. Facts only opens the tiles a place touches. Still to check: whether a VRT over `/vsigs/` paths in a private bucket works for both readers, and how STAC lists 223 assets.
+4. **Stats and Tiles read a collection of Sprout COGs**, through a VRT or an explicit list. Stats only opens the tiles a place touches. Still to check: whether a VRT over `/vsigs/` paths in a private bucket works for both readers, and how STAC lists 223 assets.
 5. **Resumable per tile.** One Batch task per tile, with capped parallelism. A task skips a tile whose output exists and is complete. Each tile writes to a final object name only when it is finished, since a GCS object is not visible until the upload completes. A manifest records bytes and a checksum per tile, so a rerun redoes only the missing or failed ones. The cost of a spot interruption becomes one tile, not the whole run.
 6. **Benchmark compression before choosing it.** Compare DEFLATE with `PREDICTOR=2` and level 9, ZSTD, and LZW on a few representative tiles: one dense cropland tile, one mostly ocean tile, and one mixed. Record bytes stored, write time, and the time to read a place-sized window. The version 2 global run used DEFLATE at level 9 and is the reference. A format a reader cannot open, for example ZSTD in an older reader, counts against it.
 
 The finest zoom is not the source pixel. At zoom 12 one 256-pixel tile pixel is about 38 m at the equator, and GLAD is 0.00025°, about 28 m. Keeping original pixels at the finest zoom needs a higher `max_zoom` in the recipe, such as 13. That is about four times the tiles, so it is an open decision for task 04.
 
-Consequences for the version 2 tasks. Task 04's `max` against `q3` sample must be built from full-resolution pixels, not from the global COG's maximum overviews, or both samples will start from maximums. Facts is not affected, because it counts full-resolution pixels. Task 06 can read the global COG this year.
+Consequences for the version 2 tasks. Task 04's `max` against `q3` sample must be built from full-resolution pixels, not from the global COG's maximum overviews, or both samples will start from maximums. Stats is not affected, because it counts full-resolution pixels. Task 06 can read the global COG this year.
 
 ## Per-tile run (version 2, next run)
 
@@ -170,7 +170,7 @@ A first run of one dense tile is the cheap way to replace the guess with a measu
 
 ### Downstream changes still needed
 
-- Facts, `facts/cropland.py`: `require_sprout` expects one COG's layout metadata, and `window_limits` opens one raster. It must open the VRT, or only the tiles a place touches.
+- Stats, `stats/cropland.py`: `require_sprout` expects one COG's layout metadata, and `window_limits` opens one raster. It must open the VRT, or only the tiles a place touches.
 - Tiles, `tiles/cropland.py`: `materialize_sprout` copies one file. It must read the collection and build its own pyramid with the recipe's `tiles.resampling`.
 - Tasks 04 to 06 in `docs/tasks/` in the app repo, and `docs/blueprint.md` in the app repo name `.../v2/cropland-2024.tif`.
 - The global mosaic code in `sprout/cropland.py` (`mosaic_canvas`, `write_mosaic_sprout`) is superseded and left in place. Remove it once the per-tile run is accepted.
