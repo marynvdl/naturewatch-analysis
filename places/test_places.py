@@ -24,6 +24,8 @@ _spec.loader.exec_module(places)
 
 RECIPE_PATH = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "places-protected-areas.yaml"
 RECIPE = json.loads(json.dumps(yaml.safe_load(RECIPE_PATH.read_text())))
+RECOGNITIONS_PATH = RECIPE_PATH.with_name("places-recognitions.yaml")
+RECOGNITIONS = json.loads(json.dumps(yaml.safe_load(RECOGNITIONS_PATH.read_text())))
 SCRIPT = Path(places.__file__)
 
 
@@ -48,6 +50,7 @@ def write_geojson(path, rows):
                         if row.get("cropland_percent") is not None
                         else {}
                     ),
+                    **({"place_type_id": row["place_type_id"]} if row.get("place_type_id") else {}),
                 },
                 "geometry": {
                     "type": "MultiPolygon",
@@ -111,7 +114,9 @@ def test_the_recipe_names_the_protected_areas_archive():
     assert contract["layer"] == "places"
     assert contract["min_zoom"] == 0
     assert contract["max_zoom"] == 12
-    assert contract["place_type"] == "conservation_area"
+    assert contract["place_types"] == ["conservation_area"]
+    assert contract["properties"] == ("id", "area_km2", "cropland_percent")
+    assert contract["name"] == "protected-areas"
     assert contract["crops_stat_id"] == "crops_percent"
     assert contract["crops_period_start"] == "2024-01-01"
 
@@ -130,7 +135,8 @@ def test_the_query_reads_current_boundaries_and_the_preferred_cropland_stat():
     assert "from public.place_boundaries as boundary" in sql
     assert "where boundary.is_current" in sql
     assert "places.publication_status = 'published'" in sql
-    assert "places.place_type_id = %(place_type)s" in sql
+    assert "places.place_type_id = any(%(place_types)s)" in sql
+    assert "places.place_type_id = any(%(place_types)s)" in places.VALID_SQL
     assert "public.place_stats_preferred" in sql
     assert "crops.boundary_id = boundary.id" in sql
     assert "crops.period_start" in sql
@@ -216,7 +222,7 @@ def test_the_proof_fails_when_a_place_appears_too_early(tmp_path):
 
 
 def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
-    job = places.batch_job(places.SCRATCH)
+    job = places.batch_job(places.scratch_prefix(RECIPE))
     policy = job["allocationPolicy"]["instances"][0]["policy"]
     assert policy["provisioningModel"] == "SPOT"
     assert job["allocationPolicy"]["location"]["allowedLocations"] == ["regions/europe-west1"]
@@ -237,7 +243,7 @@ def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
 
 
 def test_replace_is_passed_to_the_batch_job_only_when_asked():
-    job = places.batch_job(places.SCRATCH, replace=True)
+    job = places.batch_job(places.scratch_prefix(RECIPE), replace=True)
     script = job["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]["commands"][1]
     assert "--upload --replace" in script
 
@@ -320,3 +326,82 @@ def test_the_laptop_cannot_start_the_places_run():
     result = subprocess.run([sys.executable, str(SCRIPT), "run"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "Batch job" in result.stderr
+
+
+def recognition_places():
+    rows = sample_places()
+    for row, place_type in zip(rows, ("world_heritage_site", "ramsar_site", "natura_2000_site")):
+        row["place_type_id"] = place_type
+    return rows
+
+
+def test_the_recognitions_recipe_names_its_own_archive_and_types():
+    contract = places.places_contract(RECOGNITIONS)
+    assert contract["path"] == "gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles"
+    assert contract["layer"] == "recognitions"
+    assert contract["properties"] == ("id", "area_km2", "place_type_id")
+    assert contract["place_types"] == [
+        "world_heritage_site",
+        "ramsar_site",
+        "biosphere_reserve",
+        "natura_2000_site",
+        "emerald_site",
+        "other_recognition",
+    ]
+    assert contract["crops_stat_id"] is None
+    assert places.scratch_prefix(RECOGNITIONS) == "gs://nature-watch-bucket/scratch/places/recognitions/"
+    assert places.scratch_prefix(RECIPE) == "gs://nature-watch-bucket/scratch/places/protected-areas/"
+    assert places.default_dest(RECOGNITIONS).parts[-2:] == ("recognitions", "recognitions.pmtiles")
+
+
+def test_the_recipe_properties_must_start_with_id_and_area():
+    for properties in (["area_km2", "id"], ["id", "area_km2", "name"], ["id", "area_km2", "place_type_id", "place_type_id"]):
+        recipe = json.loads(json.dumps(RECOGNITIONS))
+        recipe["tiles"]["properties"] = properties
+        with pytest.raises(ValueError, match="tiles.properties"):
+            places.places_contract(recipe)
+    recipe = json.loads(json.dumps(RECOGNITIONS))
+    recipe["tiles"]["properties"] = ["id", "area_km2", "cropland_percent"]
+    with pytest.raises(ValueError, match="stats.cropland_percent"):
+        places.places_contract(recipe)
+
+
+def test_a_recognition_feature_carries_its_type_and_no_cropland(tmp_path):
+    source = tmp_path / "recognitions.geojson"
+    write_geojson(source, recognition_places())
+    lines = {place.id: json.loads(places.feature_line(place, RECOGNITIONS)) for place in places.places_from_file(source)}
+    large = sample_places()[0]["id"]
+    assert lines[large]["properties"] == {
+        "id": large,
+        "area_km2": 19000,
+        "place_type_id": "world_heritage_site",
+    }
+    command = places.tippecanoe_command(Path("in.ndjson"), Path("out.pmtiles"), RECOGNITIONS)
+    assert command[command.index("-l") + 1] == "recognitions"
+    assert "place_type_id:string" in command
+    assert "cropland_percent" not in " ".join(command)
+
+
+def test_a_recognition_without_a_type_stops_the_build(tmp_path):
+    source = tmp_path / "recognitions.geojson"
+    write_geojson(source, sample_places())
+    place = next(places.places_from_file(source))
+    with pytest.raises(SystemExit, match="place_type_id"):
+        places.feature_line(place, RECOGNITIONS)
+
+
+@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="needs felt/tippecanoe")
+def test_the_recognitions_archive_copies_the_type(tmp_path):
+    source = tmp_path / "recognitions.geojson"
+    dest = tmp_path / "out" / "recognitions.pmtiles"
+    write_geojson(source, recognition_places())
+    recipe = json.loads(json.dumps(RECOGNITIONS))
+    recipe["tiles"]["max_zoom"] = 8
+    stats = places.build_and_prove(places.places_from_file(source), dest, recipe)
+    assert stats["places"] == 3
+    assert stats["with_cropland"] == 0
+    copied = places.properties_at_zoom(dest, 8)
+    large, medium, small = (row["id"] for row in sample_places())
+    assert copied[large]["place_type_id"] == "world_heritage_site"
+    assert copied[small]["place_type_id"] == "natura_2000_site"
+    assert copied[large]["cropland_percent"] is None

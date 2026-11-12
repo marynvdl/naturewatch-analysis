@@ -1,18 +1,21 @@
 # Places
 
-How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the protected-area archive.
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the two places archives: protected areas (`cookbook/recipes/places-protected-areas.yaml`) and recognitions (`cookbook/recipes/places-recognitions.yaml`). One script builds both. `--recipe` picks the archive, and the protected areas are the default.
 
-Reads the current boundary of each published place of the recipe's type (`conservation_area`) from `place_boundaries`, and writes one PMTiles object with Tippecanoe. Merged and draft places are left out. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
+Reads the current boundary of each published place of the recipe's types (`conservation_area`, or the six recognition types) from `place_boundaries`, and writes one PMTiles object with Tippecanoe. Merged and draft places are left out. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
 
-The archive is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. It was built on 31 October 2026 from `places.geom` of every place. Since Database Honing task 07 the script reads the current boundaries of published places instead. The archive has not been rebuilt with it: the rebuild moved to app task 09, which also decides the rollback copy `v1/places.previous.pmtiles`, still the South Africa build of 29 October. Until then the 64 parcels merged by app task 06 still draw as their own shapes. Raster tiles stay as they are.
+The protected-area archive is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. It was built on 31 October 2026 from `places.geom` of every place. Since Database Honing task 07 the script reads the current boundaries of published places instead. App task 09 rebuilds it from the published conservation areas only, after the recognitions moved out, and removes the stale rollback copy `v1/places.previous.pmtiles` (the South Africa build of 29 October) first, so the rollback copy becomes the 31 October global build. Until then the 64 parcels merged by app task 06 still draw as their own shapes, and the recognitions are still in it. Raster tiles stay as they are.
+
+The recognition archive is `gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles`: World Heritage Sites, Ramsar sites, UNESCO-MAB biosphere reserves, Natura 2000 and Emerald sites, and other regional recognitions (app decisions.md, record 21). App task 09 builds it first. The app reads it from task 09b.
 
 ## What a feature contains
 
-The vector layer is `places`. Each feature carries:
+The recipe names the vector layer and the properties. `id` and `area_km2` come first, then any of `cropland_percent` and `place_type_id`. The protected-area layer is `places` with `cropland_percent`. The recognition layer is `recognitions` with `place_type_id`, and has no `stats:` block. Each feature carries:
 
 - `id` — `places.id`
 - `area_km2` — the current boundary's area
 - `cropland_percent` — the `crops_percent` value for 2024 in `place_stats_preferred`, omitted when there is none. Its sprout and method are the app's `stat_selections` row, not the recipe.
+- `place_type_id` — the place's type, for example `world_heritage_site`. A place without one stops the build.
 
 `place_boundaries.geom` is read with the same database URL as the stats step. It is not granted to `anon`. The archive does not include names or a polygon download.
 
@@ -22,7 +25,7 @@ Larger places are written from a lower zoom. The bands are on the recipe: 1,000 
 
 Tippecanoe 2.79.0 from [felt/tippecanoe](https://github.com/felt/tippecanoe) (`tippecanoe --version` prints `v2.79.0`). The Debian package is older and cannot write PMTiles. `places/Dockerfile` builds that tag on `ghcr.io/osgeo/gdal:ubuntu-small-3.11.4` for the Batch job. The image is `europe-west1-docker.pkg.dev/nature-watch-387210/places/places-tippecanoe:2.79.0`. It is not built or pushed yet; that waits for approval. Tile encoding is Mapbox Vector Tile inside PMTiles. GDAL and OGR read, validate, and prove.
 
-Flags, from `TIPPECANOE_FLAGS` and the recipe:
+Flags, from `TIPPECANOE_FLAGS` and the protected-area recipe. The recognition recipe has `-l recognitions`, and `place_type_id` (a string) in place of `cropland_percent`:
 
 ```
 -l places -Z 0 -z 12 --simplification=1 -y id -y area_km2 -y cropland_percent
@@ -51,6 +54,8 @@ Cropped laptop proof. Export `DATABASE_URL` (do not commit it) and pass a window
 python places/protected_areas.py prove --bbox=2.5,47.2,15.1,55.1   # Germany and Benelux
 python places/protected_areas.py prove --bbox=29.3,-11.8,40.5,-0.9 # Tanzania
 ```
+
+Pass `--recipe cookbook/recipes/places-recognitions.yaml` for the recognitions. The local archive goes to `data/places/<recipe name>/`, and a Batch job's scratch files to `gs://nature-watch-bucket/scratch/places/<recipe name>/`. On 12 November 2026 both recipes passed `prove --bbox=29.5,-20.5,31.5,-19.5` against the local Supabase stack loaded with the app's `records_fixture.sql`: one park in the protected-area archive, and the World Heritage and Ramsar fixture sites in the recognition archive, each with its `place_type_id`.
 
 Without `--bbox`, `prove` reads every place. Do not do that on the laptop. The proof checks every zoom 0 to 12: a place is absent below its minzoom and present from it on, every id is present by zoom 6, copied fields match, and the largest tile in bytes per zoom is recorded. `python places/protected_areas.py preview` serves the result with Range support at `http://127.0.0.1:8765/preview.html`. Cancel with Ctrl+C.
 
