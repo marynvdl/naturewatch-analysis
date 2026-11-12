@@ -1,6 +1,6 @@
-"""Checks for cropland facts. They need GDAL, exactextract, and no network.
+"""Checks for the cropland stats. They need GDAL, exactextract, and no network.
 
-Run: python -m pytest facts
+Run: python -m pytest stats
 """
 import importlib.util
 import subprocess
@@ -13,9 +13,9 @@ import yaml
 from osgeo import gdal, osr
 from shapely.geometry import MultiPolygon, box
 
-_spec = importlib.util.spec_from_file_location("facts_cropland", Path(__file__).parent / "cropland.py")
+_spec = importlib.util.spec_from_file_location("stats_cropland", Path(__file__).parent / "cropland.py")
 cropland = importlib.util.module_from_spec(_spec)
-sys.modules["facts_cropland"] = cropland
+sys.modules["stats_cropland"] = cropland
 _spec.loader.exec_module(cropland)
 
 RECIPE_PATH = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "cropland-2024.yaml"
@@ -38,7 +38,7 @@ PIXEL = 0.00025
 def place(place_id, area, seconds=1.0, geom=None):
     if geom is None:
         geom = MultiPolygon([box(0, 0, 1, 1)])
-    row = cropland.Place(place_id, place_id, area, geom)
+    row = cropland.Place(place_id, f"boundary-{place_id}", place_id, area, geom)
     return row
 
 
@@ -80,13 +80,13 @@ def test_pixel_area_uses_the_wgs84_spheroid():
     assert 0.0006 < south < 0.0008
 
 
-def test_stored_facts_keep_full_precision():
-    area, percent, coverage = cropland.fact_values(1, 3, 4)
+def test_stored_stats_keep_full_precision():
+    area, percent, coverage = cropland.stat_values(1, 3, 4)
     assert area == 1
     assert percent == pytest.approx(100 / 3)
     assert percent != round(percent, 1)
     assert coverage == 0.75
-    assert cropland.fact_values(0, 0, 10) == (0.0, 0.0, 0.0)
+    assert cropland.stat_values(0, 0, 10) == (0.0, 0.0, 0.0)
 
 
 def test_exact_count_matches_the_intersection_count():
@@ -116,14 +116,14 @@ def test_percent_uses_valid_area_and_coverage_uses_the_place_area():
     extent = extent_for(values)
     polygon = box(*extent)
     cropland_km2, valid_km2 = cropland.summarize_arrays(values, extent, polygon, CODES, SRS)
-    _area, percent, coverage = cropland.fact_values(cropland_km2, valid_km2, valid_km2)
+    _area, percent, coverage = cropland.stat_values(cropland_km2, valid_km2, valid_km2)
     assert percent == pytest.approx(50)
     assert coverage == pytest.approx(1)
 
     nodata_row = np.array([[1, 255]], dtype=np.uint8)
     cropland_km2, valid_km2 = cropland.summarize_arrays(nodata_row, extent, polygon, CODES, SRS)
     place_area = valid_km2 * 2
-    _area, percent, coverage = cropland.fact_values(cropland_km2, valid_km2, place_area)
+    _area, percent, coverage = cropland.stat_values(cropland_km2, valid_km2, place_area)
     assert percent == pytest.approx(100)
     assert coverage == pytest.approx(0.5)
 
@@ -205,7 +205,7 @@ def test_five_largest_places_can_dominate_the_counting_time():
 
 
 def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
-    job = cropland.batch_job(cropland.SCRATCH)
+    job = cropland.batch_job(cropland.SCRATCH, "stats-cropland-2024-v1-20990101000000", "abc1234")
     policy = job["allocationPolicy"]["instances"][0]["policy"]
     assert policy["machineType"] == "e2-standard-4"
     assert policy["provisioningModel"] == "SPOT"
@@ -214,7 +214,8 @@ def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
     assert spec["environment"]["variables"][cropland.BATCH_ENV] == "1"
     assert "DATABASE_URL" not in spec["environment"]["variables"]
     script = spec["runnables"][0]["container"]["commands"][1]
-    assert "nature-watch-bucket/scratch/facts/cropland-2024/" in script
+    assert "nature-watch-bucket/scratch/stats/cropland-2024/" in script
+    assert "--job-id stats-cropland-2024-v1-20990101000000 --code-version abc1234" in script
     assert 'download("cropland.py"' in script
     assert "postgresql://" not in script
     assert cropland.SECRET not in script
@@ -223,7 +224,7 @@ def test_the_batch_job_is_a_spot_machine_and_keeps_the_database_url_out():
     assert "DATABASE_URL" not in dumped
 
 
-def test_the_laptop_cannot_start_the_facts_run():
+def test_the_laptop_cannot_start_the_stats_run():
     result = subprocess.run([sys.executable, str(SCRIPT), "run"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "Batch job" in result.stderr
@@ -237,9 +238,38 @@ def test_method_summary_matches_the_app_migration():
     assert cropland.METHOD_SUMMARY in text
 
 
-def test_pilot_query_uses_the_view_and_the_upsert_names_the_method():
-    assert "public.pilot_places" in cropland.PILOT_SQL
-    assert "ST_MakeValid" in cropland.PILOT_SQL
-    assert "method_id" in cropland.UPSERT_FACT
+def test_places_are_current_boundaries_of_listed_south_africa_places():
+    sql = cropland.PILOT_SQL
+    assert "public.listed_places" in sql
+    assert "public.place_boundaries" in sql
+    assert "boundary.is_current" in sql
+    assert "boundary.id::text as boundary_id" in sql
+    assert "boundary.area_km2" in sql
+    assert "listed.iso3 = 'ZAF'" in sql
+    assert "listed.place_type_id = 'conservation_area'" in sql
+    assert "ST_MakeValid" in sql
+    assert "places.geom" not in sql
+    assert "protected_areas" not in sql
     assert cropland.sprout_id(RECIPE) == "cropland-2024-v1"
-    assert "on conflict (place_id, sprout_id, method_id)" in cropland.UPSERT_FACT
+
+
+def test_the_script_writes_stats_and_never_facts():
+    text = SCRIPT.read_text()
+    assert "public.facts" not in text
+    assert "fact_methods" not in text
+    assert "insert into public.sprouts" not in text
+    assert "insert into public.stat_methods" not in text
+    assert "public.place_stats" in cropland.INSERT_STAT
+    assert "on conflict" not in cropland.INSERT_STAT
+    assert "'running'" in cropland.INSERT_RUN
+    assert "status = 'running'" in cropland.FINISH_RUN
+    assert cropland.STAT_IDS == ("crops_area", "crops_percent", "valid_coverage")
+
+
+def test_each_place_gives_three_rows_on_its_boundary():
+    item = cropland.PlaceResult(place("p1", 4.0), 1.0, 3.0, 1.0)
+    rows = cropland.stat_rows("run-1", RECIPE, ("2024-01-01", "2024-12-31"), [item])
+    assert [row[5] for row in rows] == ["crops_area", "crops_percent", "valid_coverage"]
+    assert {row[:5] for row in rows} == {("run-1", "cropland-2024-v1", cropland.METHOD_ID, "p1", "boundary-p1")}
+    assert [row[8] for row in rows] == list(cropland.stat_values(1.0, 3.0, 4.0))
+    assert all(row[6:8] == ("2024-01-01", "2024-12-31") for row in rows)

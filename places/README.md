@@ -2,19 +2,19 @@
 
 How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the protected-area archive.
 
-Reads place geometries from the app database and writes one PMTiles object with Tippecanoe. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
+Reads the current boundary of each published place of the recipe's type (`conservation_area`) from `place_boundaries`, and writes one PMTiles object with Tippecanoe. Merged and draft places are left out. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
 
-The archive is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. Task 05 rebuilds that same object from the global places. Raster tiles stay as they are.
+The archive is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. It was built on 31 October 2026 from `places.geom` of every place. Since Database Honing task 07 the script reads the current boundaries of published places instead. The archive has not been rebuilt with it: the rebuild moved to app task 09, which also decides the rollback copy `v1/places.previous.pmtiles`, still the South Africa build of 29 October. Until then the 64 parcels merged by app task 06 still draw as their own shapes. Raster tiles stay as they are.
 
 ## What a feature contains
 
 The vector layer is `places`. Each feature carries:
 
 - `id` — `places.id`
-- `area_km2` — the stored place area
-- `cropland_percent` — `facts.percent` for sprout `cropland-2024-v1`, method `area-weighted-spheroid-v1`, omitted when no fact exists
+- `area_km2` — the current boundary's area
+- `cropland_percent` — the `crops_percent` value for 2024 in `place_stats_preferred`, omitted when there is none. Its sprout and method are the app's `stat_selections` row, not the recipe.
 
-`places.geom` is read with the same database URL as the facts step. It is not granted to `anon`. The archive does not include names or a polygon download.
+`place_boundaries.geom` is read with the same database URL as the stats step. It is not granted to `anon`. The archive does not include names or a polygon download.
 
 Larger places are written from a lower zoom. The bands are on the recipe: 1,000 km² from zoom 0, 300 km² from zoom 2, 100 km² from zoom 3, 30 km² from zoom 4, 10 km² from zoom 6. Every copied place is present by zoom 6. Geometry is simplified at low zoom and left at full resolution at zoom 12. Colour and line width are not in the archive. The app paints the layer when it draws the map.
 

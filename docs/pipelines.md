@@ -28,7 +28,7 @@ flowchart TD
   seed[Seed]
   bucket[(nature-watch-bucket)]
   sprout[Sprout]
-  facts[Facts]
+  stats[Stats]
   tiles[Tiles]
   places[Places]
   tilesBucket[(nature-watch-tiles)]
@@ -38,17 +38,17 @@ flowchart TD
   external --> seed
   recipe --> seed
   recipe --> sprout
-  recipe --> facts
+  recipe --> stats
   recipe --> tiles
   recipe --> places
   seed -->|writes the seed| bucket
   bucket -->|reads the seed| sprout
   sprout -->|writes the sprout raster| bucket
-  bucket -->|reads the sprout raster| facts
+  bucket -->|reads the sprout raster| stats
   bucket -->|reads the sprout raster| tiles
-  database -->|reads place geometries| facts
-  facts -->|writes facts| database
-  database -->|reads places and facts| places
+  database -->|reads current boundaries| stats
+  stats -->|writes place_stats| database
+  database -->|reads boundaries and stats| places
   tiles -->|writes map tiles| tilesBucket
   places -->|writes PMTiles| tilesBucket
   tilesBucket --> app
@@ -66,17 +66,17 @@ There is no pipeline orchestrator in this release. Each job is started by hand. 
 | Cookbook    | The only catalog edited by hand. A YAML recipe names a raster year or a places archive.                                                                                                                   | `cookbook/recipes/cropland-2024.yaml` is the South Africa GLAD cropland 2024 run. `cookbook/recipes/cropland-2024-v2.yaml` names 223 global tiles and the version 2 paths. `cookbook/recipes/cropland-2024-v3.yaml` is the version 3 share tiles over the same seed and sprout. `cookbook/recipes/places-protected-areas.yaml` is the protected-area archive. |
 | Seed        | Brings in the publisher’s files, checks them against the recipe, and writes a clip under the seed path.                                                                                                   | The six South Africa tiles and the mainland clip are in `gs://nature-watch-bucket/seeds/cropland/glad/2024/v1/`. The global seed holds 223 checked tiles, 5,289,882,209 bytes, at flat file names under `seeds/cropland/glad/2024/v2/`. Check job `seed-cropland-glad-2024-v2` succeeded and moved those tiles off the host path. Later checks leave the host path in place. The run record is [`seed/README.md`](../seed/README.md). |
 | Data store  | Private bucket `nature-watch-bucket`, project `nature-watch-387210`, region EU. Sprout rasters and the static STAC files for that version live here.                                                       | Public access prevention is on. Fire COGs stay at `COGS/fire/<year>/`.                                                                               |
-| Sprout      | Writes one versioned raster later steps read. Class values, nodata, and CRS are in the file. Static STAC files are generated from the recipe into the same version folder. They are not a second catalog. | `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` and the STAC files beside it. Written by a hand-started Batch job in `europe-west1`. Version 2 is written per tile: 223 COGs, 2.6 GB, under `sprouts/cropland/2024/v2/tiles/`, with `cropland-2024.vrt` and the STAC files beside them. It ran as Batch job `sprout-cropland-2024-v2` in 23 minutes. An earlier single global COG job failed twice and was cancelled. The run record is [`sprout/README.md`](../sprout/README.md). |
-| Facts       | Counts the sprout raster inside each place and writes square kilometres, percent, and valid coverage to the app database. The formula is `area-weighted-spheroid-v1`.                                    | 941 rows for sprout `cropland-2024-v1` are in the hosted `facts` table. The run record is `facts/README.md`. |
+| Sprout      | Writes one versioned raster later steps read. Class values, nodata, and CRS are in the file. Static STAC files are generated from the recipe into the same version folder. They are not a second catalog. | `gs://nature-watch-bucket/sprouts/cropland/2024/v1/cropland-2024-zaf.tif` and the STAC files beside it. Written by a hand-started Batch job in `europe-west1`. Version 2 is not written. The single global COG job failed twice, on a dataset pool limit and then on the 12 hour limit, and was cancelled. The next run is per tile. The run record is [`sprout/README.md`](../sprout/README.md). |
+| Stats       | Counts the sprout raster inside each place's current boundary and writes square kilometres, percent, and valid coverage to the app database as `place_stats` rows of one `stat_runs` row. The formula is `area-weighted-spheroid-v1`. Paused until a later parcel resumes it. | The 941 South Africa results of 22 October 2026 are 2,823 `place_stats` rows for sprout `cropland-2024-v1` (app task 07 copied them from `facts`). The run record is [`stats/README.md`](../stats/README.md). |
 | Tiles       | Builds map tiles from the sprout raster and writes them to public `nature-watch-tiles`. Colour is applied in the client.                                                                                  | Cropland zooms 0–12 are at `gs://nature-watch-tiles/cropland/2024/v1/`. Written by Batch job `tiles-cropland-2024-v1`. The run record is [`tiles/README.md`](../tiles/README.md). Fire stays on `tasks/fireTiles`. Version 2: `gs://nature-watch-tiles/cropland/2024/v2/cropland.pmtiles`, zooms 0–12, 5,084,649 tiles, 2,814,675,979 bytes, `q3`. Version 3 (task 09b): `gs://nature-watch-tiles/cropland/2024/v3/cropland.pmtiles`, 512 px share tiles, zooms 0–11, 1,275,734 tiles, 3,462,749,057 bytes. The app still reads v2 until task 10. The run record is in `tiles/README.md`. |
-| Places      | Reads place geometries and copied facts from the app database and writes one PMTiles archive to public `nature-watch-tiles`. Colour is applied in the client. Later place types can add another recipe.     | Protected areas are `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. The global rebuild with Tippecanoe ran on 31 October 2026 as Batch job `places-places-protected-areas-20261031103015`: 51,001 places, 677,532,109 bytes, zoom 0 to 12, succeeded. The run record is [`places/README.md`](../places/README.md). |
+| Places      | Reads the current boundaries of published places of one type, and their preferred cropland percent, from the app database and writes one PMTiles archive to public `nature-watch-tiles`. Colour is applied in the client. Later place types can add another recipe.     | Protected areas are `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. The global rebuild with Tippecanoe ran on 31 October 2026 as Batch job `places-places-protected-areas-20261031103015`: 51,001 places, 677,532,109 bytes, zoom 0 to 12, succeeded. The run record is [`places/README.md`](../places/README.md). |
 | Tiles store | Public bucket `nature-watch-tiles`.                                                                                                                                                                       | Cropland version 1 is `cropland/<year>/v<n>/{z}/{x}/{y}.png`. Version 2 is `cropland/2024/v2/cropland.pmtiles`, written 2 November 2026. Version 3 is `cropland/2024/v3/cropland.pmtiles`, written 8 November 2026. Fire tiles are `fire/<year>/{z}/{x}/{y}.png`. Places archives are `places/<type>/v<n>/places.pmtiles`. The 2015 and 2019 crop tiles stay at `crop/`. |
 
 The crop, built, and bare virtual-machine tasks are retired. Their folders and workflow files are in `archive/vm-tile-tasks/`. Those workflows are not in `.github/workflows/`, and they do not start a machine. The dams Mapbox recipe is in `archive/mapbox-dams/`. The map still reads the existing tileset.
 
 ## Direction for the sprout step
 
-Decided on 30 October 2026 and built for cropland 2024 version 2. Sprout writes one COG per geographic tile, with full-resolution classes only and no maximum or `q3` overviews. The Tiles step owns resampling, and Facts and Tiles read the collection of tiles through the VRT. Each tile is resumable. Compression was benchmarked and piloted first. The reasons, the numbers, and the downstream changes still needed in Facts, Tiles and tasks 04 to 06 are in [`sprout/README.md`](../sprout/README.md).
+Decided on 30 October 2026, not built. A later year writes one Sprout COG per geographic tile, with full-resolution classes only and no maximum or `q3` overviews. The Tiles step owns resampling, and Stats and Tiles read the collection of tiles, for example through a VRT. Each tile is resumable. Compression is benchmarked first. The reasons and open questions are in [`sprout/README.md`](../sprout/README.md). The version 2 global COG is written as one file this year.
 
 ## Fetch
 
@@ -104,4 +104,4 @@ flowchart LR
 
 ## Keeping this page current
 
-Change the diagram when the path changes. Change the status table when a step starts or finishes. Leave the cost of a run in that step’s README. When a new object is one the app or the facts step will read, also update `docs/blueprint.md` in `naturewatch-app` in that same piece of work.
+Change the diagram when the path changes. Change the status table when a step starts or finishes. Leave the cost of a run in that step’s README. When a new object is one the app or the stats step will read, also update `docs/blueprint.md` in `naturewatch-app` in that same piece of work.
