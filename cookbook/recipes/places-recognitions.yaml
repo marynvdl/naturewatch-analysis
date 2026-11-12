@@ -1,0 +1,39 @@
+# Hand-edited catalog for the recognition boundary archive.
+# The Places pipeline reads this recipe. It does not edit it.
+# Geometries come from the app database: the current boundary in
+# public.place_boundaries of each published place of these types. Which WDPCA
+# designations are recognitions is record 21 of naturewatch-app
+# docs/database/decisions.md. The app reads this archive from task 09b.
+id: places-recognitions
+title: Recognition boundaries
+kind: places
+source:
+  boundaries: current
+  publication_status: published
+  place_type:
+    - world_heritage_site
+    - ramsar_site
+    - biosphere_reserve
+    - natura_2000_site
+    - emerald_site
+    - other_recognition
+tiles:
+  path: gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles
+  layer: recognitions
+  min_zoom: 0
+  max_zoom: 12
+  scheme: pmtiles
+  # Paint is applied in the client, by place_type_id.
+  properties:
+    - id
+    - area_km2
+    - place_type_id
+  # A place is written from this zoom through max_zoom. Larger first.
+  minzoom_by_area_km2:
+    - { area_km2: 1000, minzoom: 0 }
+    - { area_km2: 300, minzoom: 2 }
+    - { area_km2: 100, minzoom: 3 }
+    - { area_km2: 30, minzoom: 4 }
+    - { area_km2: 10, minzoom: 6 }
+  simplification: 1
+  simplification_max_zoom: 0

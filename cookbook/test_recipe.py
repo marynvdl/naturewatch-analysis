@@ -32,6 +32,7 @@ def test_the_catalog_lists_the_cropland_and_places_recipes():
         "cropland-2024-v3.yaml",
         "cropland-2024.yaml",
         "places-protected-areas.yaml",
+        "places-recognitions.yaml",
     ]
     recipe = dict(loaded)["cropland-2024.yaml"]
     assert recipe["id"] == "cropland-2024"
@@ -58,6 +59,22 @@ def test_the_places_recipe_names_the_protected_areas_archive():
     assert recipe["tiles"]["min_zoom"] == 0
     assert recipe["tiles"]["max_zoom"] == 12
     assert recipe["tiles"]["properties"] == ["id", "area_km2", "cropland_percent"]
+
+
+def test_the_recognitions_recipe_names_its_archive():
+    recipe = dict(load_recipes())["places-recognitions.yaml"]
+    assert recipe["id"] == "places-recognitions"
+    assert recipe["kind"] == "places"
+    assert recipe["source"]["boundaries"] == "current"
+    assert recipe["source"]["publication_status"] == "published"
+    assert "conservation_area" not in recipe["source"]["place_type"]
+    assert len(recipe["source"]["place_type"]) == 6
+    assert "stats" not in recipe
+    assert recipe["tiles"]["path"] == (
+        "gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles"
+    )
+    assert recipe["tiles"]["layer"] == "recognitions"
+    assert recipe["tiles"]["properties"] == ["id", "area_km2", "place_type_id"]
 
 
 def test_recipe_names_the_seed_and_the_sprout_raster():

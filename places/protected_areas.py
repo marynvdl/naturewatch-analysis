@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Build the protected-area PMTiles archive from the app database.
+"""Build a places PMTiles archive from the app database.
 
-The recipe is the catalog. This script reads it and does not edit it.
+The recipe is the catalog. This script reads it and does not edit it. Two
+recipes use it: the protected areas (places-protected-areas.yaml) and the
+recognitions (places-recognitions.yaml).
 Each feature is the current boundary of a published place of the recipe's
-type. It carries places.id, the boundary's area_km2, and the cropland percent
-when place_stats_preferred has one. Colour is applied in the client. The tile engine is Tippecanoe
+types. It carries the properties the recipe lists: places.id, the boundary's
+area_km2, and, when listed, the cropland percent from place_stats_preferred
+and the place's place_type_id. Colour is applied in the client. The tile engine is Tippecanoe
 (felt/tippecanoe 2.x), which streams newline-delimited GeoJSON and writes
 PMTiles directly. GDAL and OGR read, validate, and prove the archive.
 A laptop prove writes a local archive and does not upload. The hosted
 publish waits for approval.
 
-  python places/protected_areas.py prove [--bbox W,S,E,N]
+  python places/protected_areas.py prove [--recipe R] [--bbox W,S,E,N]
   python places/protected_areas.py build --source places.ndjson --dest out.pmtiles
 """
 from __future__ import annotations
@@ -47,10 +50,18 @@ MEMORY_MIB = "32768"
 BOOT_DISK_GB = 100
 MAX_RUN_SECONDS = 7200
 SERVICE_ACCOUNT = "637146989512-compute@developer.gserviceaccount.com"
-SCRATCH = "gs://nature-watch-bucket/scratch/places/protected-areas/"
+SCRATCH_ROOT = "gs://nature-watch-bucket/scratch/places/"
 SECRET = "naturewatch-facts-database-url"
 BATCH_ENV = "NATUREWATCH_PLACES_BATCH"
-PROPERTIES = ("id", "area_km2", "cropland_percent")
+# Every archive carries id and area_km2 first. The others are optional.
+REQUIRED_PROPERTIES = ("id", "area_km2")
+OPTIONAL_PROPERTIES = ("cropland_percent", "place_type_id")
+PROPERTY_TYPES = {
+    "id": "string",
+    "area_km2": "float",
+    "cropland_percent": "float",
+    "place_type_id": "string",
+}
 PREVIOUS_NAME = "places.previous.pmtiles"
 FETCH_ROWS = 200
 
@@ -72,6 +83,7 @@ class PlaceFeature:
     area_km2: float
     cropland_percent: float | None
     wkb: bytes
+    place_type_id: str | None = None
 
 
 def load_recipe(path: Path) -> dict:
@@ -93,8 +105,9 @@ def places_contract(recipe: dict) -> dict:
     problems = []
     if tiles.get("scheme") != "pmtiles":
         problems.append("tiles.scheme must be pmtiles")
-    if tiles.get("layer") != "places":
-        problems.append("tiles.layer must be places")
+    layer = str(tiles.get("layer") or "")
+    if not layer.replace("_", "").isalpha() or not layer.islower():
+        problems.append("tiles.layer must be a lowercase name")
     if int(tiles.get("min_zoom", -1)) != 0:
         problems.append("tiles.min_zoom must be 0")
     max_zoom = int(tiles.get("max_zoom", -1))
@@ -105,33 +118,48 @@ def places_contract(recipe: dict) -> dict:
         problems.append("tiles.path must be under nature-watch-tiles/places/")
     if not path.endswith(".pmtiles"):
         problems.append("tiles.path must be a .pmtiles object")
-    if list(tiles.get("properties") or []) != list(PROPERTIES):
-        problems.append("tiles.properties must be id, area_km2, cropland_percent")
+    properties = tuple(tiles.get("properties") or ())
+    if (
+        properties[: len(REQUIRED_PROPERTIES)] != REQUIRED_PROPERTIES
+        or any(name not in OPTIONAL_PROPERTIES for name in properties[len(REQUIRED_PROPERTIES) :])
+        or len(set(properties)) != len(properties)
+    ):
+        problems.append(
+            "tiles.properties must be id, area_km2, then any of cropland_percent, place_type_id"
+        )
     bands = tiles.get("minzoom_by_area_km2") or []
     if not bands:
         problems.append("tiles.minzoom_by_area_km2 is missing")
     source = recipe.get("source") or {}
     if source.get("boundaries") != "current" or source.get("publication_status") != "published":
         problems.append("source must be the current boundaries of published places")
-    if not source.get("place_type"):
+    place_types = source.get("place_type")
+    if isinstance(place_types, str):
+        place_types = [place_types]
+    if not place_types or not all(isinstance(name, str) and name for name in place_types):
         problems.append("source.place_type is missing")
     crops = (recipe.get("stats") or {}).get("cropland_percent") or {}
-    if not crops.get("stat_id") or not crops.get("period_start"):
+    if "cropland_percent" in properties and (not crops.get("stat_id") or not crops.get("period_start")):
         problems.append("stats.cropland_percent needs stat_id and period_start")
     if problems:
         raise ValueError("; ".join(problems))
+    name = str(recipe.get("id") or "").removeprefix("places-")
     return {
+        "name": name,
         "path": path,
-        "layer": str(tiles["layer"]),
+        "layer": layer,
+        "properties": properties,
         "min_zoom": 0,
         "max_zoom": max_zoom,
         "simplification": float(tiles.get("simplification", 1)),
         "minzoom_by_area_km2": [
             (float(band["area_km2"]), int(band["minzoom"])) for band in bands
         ],
-        "place_type": str(source["place_type"]),
-        "crops_stat_id": str(crops["stat_id"]),
-        "crops_period_start": str(crops["period_start"]),
+        "place_types": [str(name) for name in place_types],
+        "crops_stat_id": str(crops["stat_id"]) if "cropland_percent" in properties else None,
+        "crops_period_start": (
+            str(crops["period_start"]) if "cropland_percent" in properties else None
+        ),
     }
 
 
@@ -177,14 +205,19 @@ def place_from_feature(feature: ogr.Feature) -> PlaceFeature:
     geom = feature.GetGeometryRef()
     if geom is None:
         raise ValueError("feature has no geometry")
-    crop = feature.GetField("cropland_percent")
-    if crop is not None:
-        crop = float(crop)
+    definition = feature.GetDefnRef()
+    crop = None
+    if definition.GetFieldIndex("cropland_percent") >= 0:
+        crop = feature.GetField("cropland_percent")
+    place_type = None
+    if definition.GetFieldIndex("place_type_id") >= 0:
+        place_type = feature.GetField("place_type_id")
     return PlaceFeature(
         id=str(feature.GetField("id")),
         area_km2=float(feature.GetField("area_km2")),
-        cropland_percent=crop,
+        cropland_percent=None if crop is None else float(crop),
         wkb=polygonal_wkb(geom),
+        place_type_id=None if place_type is None else str(place_type),
     )
 
 
@@ -206,13 +239,14 @@ PLACES_SQL = """
 select
   boundary.place_id::text as id,
   boundary.area_km2,
+  places.place_type_id,
   crops.value as cropland_percent,
   extensions.ST_AsBinary(boundary.geom) as geom
 from public.place_boundaries as boundary
 join public.places
   on places.id = boundary.place_id
  and places.publication_status = 'published'
- and places.place_type_id = %(place_type)s
+ and places.place_type_id = any(%(place_types)s)
 left join public.place_stats_preferred as crops
   on crops.boundary_id = boundary.id
  and crops.stat_id = %(crops_stat_id)s
@@ -232,7 +266,7 @@ from public.place_boundaries as boundary
 join public.places
   on places.id = boundary.place_id
  and places.publication_status = 'published'
- and places.place_type_id = %(place_type)s
+ and places.place_type_id = any(%(place_types)s)
 where boundary.is_current
 """
 
@@ -266,7 +300,7 @@ def command_check_valid(database_url: str, recipe: dict) -> None:
     """Count invalid and non-polygonal current boundaries. Counts only, no geometry leaves."""
     contract = places_contract(recipe)
     with connect(database_url) as conn:
-        row = conn.execute(VALID_SQL, {"place_type": contract["place_type"]}).fetchone()
+        row = conn.execute(VALID_SQL, {"place_types": contract["place_types"]}).fetchone()
     print(f"places {row['places']}", flush=True)
     print(f"invalid {row['invalid']}", flush=True)
     print(f"not_polygonal {row['not_polygonal']}", flush=True)
@@ -281,7 +315,7 @@ def stream_places(
     """Yield places from a server-side cursor. Memory does not grow with place count."""
     contract = places_contract(recipe)
     params: dict = {
-        "place_type": contract["place_type"],
+        "place_types": contract["place_types"],
         "crops_stat_id": contract["crops_stat_id"],
         "crops_period_start": contract["crops_period_start"],
     }
@@ -308,15 +342,21 @@ def stream_places(
                     area_km2=float(row["area_km2"]),
                     cropland_percent=None if crop is None else float(crop),
                     wkb=wkb,
+                    place_type_id=str(row["place_type_id"]),
                 )
 
 
 def feature_line(place: PlaceFeature, recipe: dict) -> str:
     """One newline-delimited GeoJSON feature with its own minzoom."""
-    bands = places_contract(recipe)["minzoom_by_area_km2"]
+    contract = places_contract(recipe)
+    bands = contract["minzoom_by_area_km2"]
     properties = {"id": place.id, "area_km2": place.area_km2}
-    if place.cropland_percent is not None:
+    if "cropland_percent" in contract["properties"] and place.cropland_percent is not None:
         properties["cropland_percent"] = place.cropland_percent
+    if "place_type_id" in contract["properties"]:
+        if not place.place_type_id:
+            raise SystemExit(f"{place.id} has no place_type_id")
+        properties["place_type_id"] = place.place_type_id
     geometry = ogr.CreateGeometryFromWkb(place.wkb).ExportToJson(["COORDINATE_PRECISION=7"])
     return (
         '{"type":"Feature","properties":'
@@ -331,7 +371,9 @@ def feature_line(place: PlaceFeature, recipe: dict) -> str:
 
 def write_ndjson(places: Iterator[PlaceFeature], dest: Path, recipe: dict) -> dict:
     """Write places to disk one line at a time. Returns counts and the id to minzoom map."""
-    bands = places_contract(recipe)["minzoom_by_area_km2"]
+    contract = places_contract(recipe)
+    bands = contract["minzoom_by_area_km2"]
+    keeps_crop = "cropland_percent" in contract["properties"]
     dest.parent.mkdir(parents=True, exist_ok=True)
     count = with_cropland = 0
     minzooms: dict[str, int] = {}
@@ -340,7 +382,7 @@ def write_ndjson(places: Iterator[PlaceFeature], dest: Path, recipe: dict) -> di
             handle.write(feature_line(place, recipe))
             minzooms[place.id] = minzoom_for_area(place.area_km2, bands)
             count += 1
-            with_cropland += place.cropland_percent is not None
+            with_cropland += keeps_crop and place.cropland_percent is not None
     return {"places": count, "with_cropland": with_cropland, "minzooms": minzooms}
 
 
@@ -353,8 +395,8 @@ def tippecanoe_command(source: Path, dest: Path, recipe: dict) -> list[str]:
         "-Z", str(contract["min_zoom"]),
         "-z", str(contract["max_zoom"]),
         f"--simplification={contract['simplification']:g}",
-        "-y", "id", "-y", "area_km2", "-y", "cropland_percent",
-        "-T", "id:string", "-T", "area_km2:float", "-T", "cropland_percent:float",
+        *[flag for name in contract["properties"] for flag in ("-y", name)],
+        *[flag for name in contract["properties"] for flag in ("-T", f"{name}:{PROPERTY_TYPES[name]}")],
         *TIPPECANOE_FLAGS,
         str(source),
     ]
@@ -400,6 +442,7 @@ def ids_by_zoom(path: Path, zoom: int) -> dict[str, dict]:
         layer = dataset.GetLayer(index)
         # A layer with no cropland percent anywhere has no such field.
         has_crop = layer.GetLayerDefn().GetFieldIndex("cropland_percent") >= 0
+        has_type = layer.GetLayerDefn().GetFieldIndex("place_type_id") >= 0
         for feature in layer:
             place_id = str(feature.GetField("id"))
             if place_id in found:
@@ -408,6 +451,7 @@ def ids_by_zoom(path: Path, zoom: int) -> dict[str, dict]:
             found[place_id] = {
                 "area_km2": feature.GetField("area_km2"),
                 "cropland_percent": None if crop is None else float(crop),
+                "place_type_id": feature.GetField("place_type_id") if has_type else None,
             }
     dataset = None
     return found
@@ -476,6 +520,8 @@ def prove_archive(
                 problems.append(f"{place_id} should have no cropland percent")
         elif got["cropland_percent"] is None or abs(got["cropland_percent"] - row["cropland_percent"]) > 1e-6:
             problems.append(f"{place_id} cropland percent was not copied")
+        if got["place_type_id"] != row.get("place_type_id"):
+            problems.append(f"{place_id} place_type_id was not copied")
     largest = largest_tile_by_zoom(path)
     if problems:
         shown = "; ".join(problems[:10])
@@ -483,12 +529,15 @@ def prove_archive(
     return {"ids_by_zoom": report, "largest_tile_bytes_by_zoom": largest}
 
 
-def expected_from(info: dict, areas: dict[str, tuple[float, float | None]]) -> dict[str, dict]:
+def expected_from(
+    info: dict, areas: dict[str, tuple[float, float | None, str | None]]
+) -> dict[str, dict]:
     return {
         place_id: {
             "minzoom": zoom,
             "area_km2": areas[place_id][0],
             "cropland_percent": areas[place_id][1],
+            "place_type_id": areas[place_id][2],
         }
         for place_id, zoom in info["minzooms"].items()
     }
@@ -504,11 +553,18 @@ def build_and_prove(
     work = dest.parent
     work.mkdir(parents=True, exist_ok=True)
     source = work / "places.ndjson"
-    areas: dict[str, tuple[float, float | None]] = {}
+    areas: dict[str, tuple[float, float | None, str | None]] = {}
+    contract = places_contract(recipe)
+    keeps_crop = "cropland_percent" in contract["properties"]
+    keeps_type = "place_type_id" in contract["properties"]
 
     def remember(items: Iterator[PlaceFeature]) -> Iterator[PlaceFeature]:
         for item in items:
-            areas[item.id] = (item.area_km2, item.cropland_percent)
+            areas[item.id] = (
+                item.area_km2,
+                item.cropland_percent if keeps_crop else None,
+                item.place_type_id if keeps_type else None,
+            )
             yield item
 
     info = write_ndjson(remember(places), source, recipe)
@@ -551,7 +607,7 @@ PREVIEW_HTML = """<!doctype html>
   <script>
     const protocol = new pmtiles.Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
-    const archive = new URL("places.pmtiles", window.location.href);
+    const archive = new URL("ARCHIVE_NAME", window.location.href);
     const map = new maplibregl.Map({
       container: "map",
       style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
@@ -564,7 +620,7 @@ PREVIEW_HTML = """<!doctype html>
     });
     map.on("load", async () => {
       const archiveUrl = archive.href;
-      const file = new File([await (await fetch(archiveUrl)).arrayBuffer()], "places.pmtiles");
+      const file = new File([await (await fetch(archiveUrl)).arrayBuffer()], "ARCHIVE_NAME");
       protocol.add(new pmtiles.PMTiles({
         getKey: () => archiveUrl,
         getBytes: (offset, length) => file.slice(offset, offset + length).arrayBuffer().then((data) => ({ data }))
@@ -574,14 +630,14 @@ PREVIEW_HTML = """<!doctype html>
         id: "places-fill",
         type: "fill",
         source: "places",
-        "source-layer": "places",
+        "source-layer": "LAYER_NAME",
         paint: { "fill-color": "#1f4b3a", "fill-opacity": 0.18 }
       });
       map.addLayer({
         id: "places-line",
         type: "line",
         source: "places",
-        "source-layer": "places",
+        "source-layer": "LAYER_NAME",
         paint: { "line-color": "#1f4b3a", "line-width": 1.5 }
       });
     });
@@ -594,9 +650,9 @@ PREVIEW_HTML = """<!doctype html>
 """
 
 
-def write_preview(dest: Path) -> Path:
+def write_preview(dest: Path, layer: str = "places") -> Path:
     html = dest.with_name("preview.html")
-    html.write_text(PREVIEW_HTML)
+    html.write_text(PREVIEW_HTML.replace("ARCHIVE_NAME", dest.name).replace("LAYER_NAME", layer))
     return html
 
 
@@ -668,10 +724,10 @@ class ByteRangeHandler(http.server.SimpleHTTPRequestHandler):
             remaining -= len(chunk)
 
 
-def command_preview(dest: Path, port: int) -> None:
+def command_preview(dest: Path, port: int, layer: str = "places") -> None:
     if not dest.exists():
         raise SystemExit(f"no archive at {dest}. Run prove first.")
-    write_preview(dest)
+    write_preview(dest, layer)
     handler = functools.partial(ByteRangeHandler, directory=str(dest.parent))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"preview http://127.0.0.1:{port}/preview.html", flush=True)
@@ -705,9 +761,19 @@ def command_prove(recipe: dict, dest: Path, make_valid: bool, bbox) -> None:
     if not database_url:
         raise SystemExit("DATABASE_URL is not set. Export it for this command. Do not commit it.")
     stats = build_and_prove(stream_places(database_url, recipe, make_valid, bbox), dest, recipe)
-    stats["preview"] = str(write_preview(dest))
+    stats["preview"] = str(write_preview(dest, places_contract(recipe)["layer"]))
     print_stats(stats)
     print("proof passed", flush=True)
+
+
+def scratch_prefix(recipe: dict) -> str:
+    """Scratch folder for one recipe's Batch job, for example .../places/recognitions/."""
+    return f"{SCRATCH_ROOT}{places_contract(recipe)['name']}/"
+
+
+def default_dest(recipe: dict) -> Path:
+    contract = places_contract(recipe)
+    return ROOT / "data" / "places" / contract["name"] / contract["path"].rsplit("/", 1)[1]
 
 
 def gs_join(prefix: str, name: str) -> str:
@@ -943,9 +1009,10 @@ def command_submit(recipe_path: Path, replace: bool, make_valid: bool) -> None:
     work.mkdir(parents=True, exist_ok=True)
     recipe_json = work / "recipe.json"
     recipe_json.write_text(json.dumps(recipe) + "\n")
-    upload_with_gcloud(Path(__file__).resolve(), gs_join(SCRATCH, "protected_areas.py"))
-    upload_with_gcloud(recipe_json, gs_join(SCRATCH, "recipe.json"))
-    config = batch_job(SCRATCH, replace, make_valid)
+    scratch = scratch_prefix(recipe)
+    upload_with_gcloud(Path(__file__).resolve(), gs_join(scratch, "protected_areas.py"))
+    upload_with_gcloud(recipe_json, gs_join(scratch, "recipe.json"))
+    config = batch_job(scratch, replace, make_valid)
     config_path = work / "batch_job.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     print(config_path.read_text(), flush=True)
@@ -988,7 +1055,8 @@ def main() -> None:
     parser.add_argument(
         "--dest",
         type=Path,
-        default=ROOT / "data" / "places" / "protected-areas" / "places.pmtiles",
+        default=None,
+        help="local archive; defaults to data/places/<recipe name>/<archive file name>",
     )
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--replace", action="store_true", help="replace the published object after a rollback copy")
@@ -1003,8 +1071,10 @@ def main() -> None:
     make_valid = args.validate == "ogr"
     started = time.perf_counter()
     try:
+        if args.dest is None:
+            args.dest = default_dest(load_recipe(args.recipe))
         if args.command == "preview":
-            command_preview(args.dest, args.port)
+            command_preview(args.dest, args.port, places_contract(load_recipe(args.recipe))["layer"])
             return
         if args.command == "check-valid":
             database_url = os.environ.get("DATABASE_URL")
