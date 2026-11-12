@@ -93,6 +93,19 @@ Largest tile in bytes (compressed, as stored):
 
 **Finding.** Germany and Benelux has a zoom 6 tile of 636,038 bytes, above the 500 KB mark, and zoom 4 and 5 are near 340 to 350 KB. This is with every place kept and no cap. It is what keeping all places at zoom 6 costs in dense regions. The global archive is likely to have similar or larger tiles. Reported, not reduced.
 
+## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
+
+Approved by the user. First the stale South Africa rollback copy `v1/places.previous.pmtiles` (3,592,259 bytes) was deleted, so that `--replace` keeps the global build of 31 October as the rollback copy. Both jobs use the image of 31 October, spot `e2-standard-8` in `europe-west1`, `maxRunDuration` 7,200 s, one retry, validation `none`.
+
+| Job | Command | Output |
+| --- | --- | --- |
+| `places-places-protected-areas-20261112180636` | `submit --replace` | `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, the 39,457 published conservation areas; rollback copy `v1/places.previous.pmtiles` |
+| `places-places-recognitions-20261112180655` | `submit --recipe cookbook/recipes/places-recognitions.yaml` | `gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles`, the 11,480 published recognitions |
+
+Status: `gcloud batch jobs describe <job> --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete <job> --location=europe-west1 --project=nature-watch-387210`.
+
+**Result:** to be recorded when the jobs end.
+
 ## Hosted run, submitted 31 October 2026
 
 Approved and submitted. Job `places-places-protected-areas-20261031103015`, `europe-west1`, spot `e2-standard-8`, 100 GB disk, `maxRunDuration` 7,200 s, command `submit --replace`. Image built for linux/amd64 from `places/Dockerfile` and pushed to Artifact Registry repository `places` (Cloud Build was refused for this account, so it was built locally). Output `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, rollback copy `v1/places.previous.pmtiles`.
