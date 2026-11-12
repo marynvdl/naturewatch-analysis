@@ -93,6 +93,42 @@ Largest tile in bytes (compressed, as stored):
 
 **Finding.** Germany and Benelux has a zoom 6 tile of 636,038 bytes, above the 500 KB mark, and zoom 4 and 5 are near 340 to 350 KB. This is with every place kept and no cap. It is what keeping all places at zoom 6 costs in dense regions. The global archive is likely to have similar or larger tiles. Reported, not reduced.
 
+## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
+
+Approved by the user. First the stale South Africa rollback copy `v1/places.previous.pmtiles` (3,592,259 bytes) was deleted, so that `--replace` keeps the global build of 31 October as the rollback copy. Both jobs use the image of 31 October, spot `e2-standard-8` in `europe-west1`, `maxRunDuration` 7,200 s, one retry, validation `none`.
+
+| Job | Command | Output |
+| --- | --- | --- |
+| `places-places-protected-areas-20261112180636` | `submit --replace` | `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, the 39,457 published conservation areas; rollback copy `v1/places.previous.pmtiles` |
+| `places-places-recognitions-20261112180655` | `submit --recipe cookbook/recipes/places-recognitions.yaml` | `gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles`, the 11,480 published recognitions |
+
+Status: `gcloud batch jobs describe <job> --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete <job> --location=europe-west1 --project=nature-watch-387210`.
+
+**Result: both SUCCEEDED.** No retry. Proof passed at every zoom 0 to 12 for both, `Cache-Control: no-cache`, and the range request answered 206.
+
+| Measure | Places | Recognitions |
+| --- | --- | --- |
+| Places | 39,457 (915 with a cropland percent) | 11,480 |
+| Bytes stored | 491,711,008 (469 MiB) | 211,821,181 (202 MiB) |
+| Batch run duration | 1,579 s, ended 18:34 UTC | 736 s, ended 18:20 UTC |
+| Script wall time | 1,573 s | 730 s |
+| Peak memory | 4,777,197,568 bytes (4.4 GiB) | 4,103,176,192 bytes (3.8 GiB) |
+| Present at zoom 0 and 1, 2, 3, 4 and 5 | 2,870; 6,457; 12,176; 22,340 | 679; 1,905; 3,899; 7,208 |
+| Present from zoom 6 | all 39,457 | all 11,480 |
+
+The places archive holds exactly the published conservation areas: no recognition, and no merged parcel, which draws as the place it was merged into. The global build of 31 October (677,532,109 bytes, 51,001 places) is now `v1/places.previous.pmtiles`.
+
+Largest tile in bytes (compressed, as stored):
+
+| Zoom | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Places | 172,311 | 82,017 | 154,103 | 188,448 | 333,503 | 252,822 | 401,580 | 348,438 | 278,140 | 131,747 | 163,989 | 93,008 | 58,065 |
+| Recognitions | 43,847 | 38,022 | 114,427 | 287,176 | 409,406 | 197,672 | 244,750 | 191,750 | 179,331 | 142,872 | 67,933 | 36,403 | 22,437 |
+
+Taking the recognitions out brought every places tile under 500 KB. The largest was 723,745 bytes at zoom 4 on 31 October.
+
+**Cost.** About 26 and 12 minutes on spot `e2-standard-8`. At my estimate of about $0.10 an hour that is roughly $0.07 together, plus cents of disk and logging. This is an estimate, not a bill. Storage is about 1.4 GB across the three objects, about $0.03 a month. The database read was again about 3.3 GB in all.
+
 ## Hosted run, submitted 31 October 2026
 
 Approved and submitted. Job `places-places-protected-areas-20261031103015`, `europe-west1`, spot `e2-standard-8`, 100 GB disk, `maxRunDuration` 7,200 s, command `submit --replace`. Image built for linux/amd64 from `places/Dockerfile` and pushed to Artifact Registry repository `places` (Cloud Build was refused for this account, so it was built locally). Output `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`, rollback copy `v1/places.previous.pmtiles`.
