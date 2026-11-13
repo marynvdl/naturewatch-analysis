@@ -44,7 +44,9 @@ Never commit or expose a service-account JSON key, a private key, a bucket acces
 
 ## Git
 
-Branch from `main`. When a task passes local checks, commit only its files, push the branch, and open a pull request into `main`. Report the pull request and its checks. Do not merge until the checks pass and the user says so.
+Branch from `main`. When a task passes local checks, commit only its files, push the branch, and open a pull request into `main`.
+
+Name a branch `<type>/<short-name>`, and a task branch `<type>/task-NN-<name>`. The types are `feat`, `fix`, `docs`, `chore`, `ci`, and `data` for work on the hosted database, the bucket, or Batch. A commit subject is `<type>: <imperative summary>`, about 72 characters at most, with a body only when the reason is not recorded elsewhere. A pull request title has the same form and names the task, for example `feat: recognitions on the map (task 09b)`. Its description follows `.github/PULL_REQUEST_TEMPLATE.md` and holds only what is not recorded elsewhere. Pull requests are squash-merged, so the title becomes the one commit on the target branch. Report the pull request and its checks. Do not merge until the checks pass and the user says so.
 
 In the app repo, do not open or merge a pull request from `develop` into `main` until a production release is explicitly requested.
 
