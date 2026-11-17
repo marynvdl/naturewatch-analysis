@@ -107,6 +107,111 @@ def write_sprout(codes: np.ndarray, bounds, recipe: dict, dest: Path) -> dict:
     return {"bytes": dest.stat().st_size, "columns": cols, "rows": rows}
 
 
+LEVEL_LUT = np.zeros(256, np.uint8)
+SURFACE_LUT = np.zeros(256, np.uint8)
+for _code in range(1, 13):
+    LEVEL_LUT[_code] = (_code - 1) // 3 + 1
+    SURFACE_LUT[_code] = SURFACE_VALUE[(_code - 1) % 3]
+STRIP_ROWS = 2048
+
+
+def code_sql(recipe: dict) -> str:
+    """The burn code of a seed row, as in code(): level value, then surface rank."""
+    parts = []
+    for level_name, level in recipe["roads"]["levels"].items():
+        for surface, rank in SURFACE_RANK.items():
+            test = "surface IS NULL" if surface is None else f"surface = '{surface}'"
+            parts.append(f"WHEN level = '{level_name}' AND {test} THEN {code(level['value'], rank)}")
+    return "CASE " + " ".join(parts) + " END"
+
+
+def write_burn_source(con, seed_paths: list[str], bounds, recipe: dict, dest: Path) -> int:
+    """One FlatGeobuf of the roads that reach into bounds, sorted by burn code.
+
+    GDAL burns features in file order, so a later, higher code wins a cell. There is no
+    spatial index, which would reorder the features. The bbox test is padded by one cell.
+    """
+    pad = recipe["grid"]["pixel_size_deg"]
+    west, south, east, north = bounds
+    files = ", ".join(f"'{p}'" for p in seed_paths)
+    where = (
+        f"bbox.xmin <= {east + pad} AND bbox.xmax >= {west - pad} "
+        f"AND bbox.ymin <= {north + pad} AND bbox.ymax >= {south - pad}"
+    )
+    query = f"SELECT {code_sql(recipe)} AS code, geometry FROM read_parquet([{files}]) WHERE {where} ORDER BY code"
+    if dest.exists():
+        dest.unlink()
+    con.execute("SET geometry_always_xy = true")
+    con.execute(
+        f"COPY ({query}) TO '{dest}' (FORMAT GDAL, DRIVER 'FlatGeobuf', LAYER_CREATION_OPTIONS 'SPATIAL_INDEX=NO')"
+    )
+    return int(con.execute(f"SELECT count(*) FROM ({query})").fetchone()[0])
+
+
+def burn_source(source: Path, bounds, recipe: dict, all_touched: bool = True):
+    """A MEM dataset of burn codes for bounds, burned from a write_burn_source file in one pass."""
+    pixel = recipe["grid"]["pixel_size_deg"]
+    west, north, cols, rows = snapped(bounds, pixel, tuple(recipe["grid"]["origin"]))
+    target = gdal.GetDriverByName("MEM").Create("", cols, rows, 1, gdal.GDT_Byte)
+    target.SetGeoTransform((west, pixel, 0, north, 0, -pixel))
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    target.SetProjection(srs.ExportToWkt())
+    target.GetRasterBand(1).Fill(0)
+    vector = gdal.OpenEx(str(source), gdal.OF_VECTOR)
+    options = gdal.RasterizeOptions(layers=[vector.GetLayer(0).GetName()], attribute="code", allTouched=all_touched)
+    gdal.Rasterize(target, vector, options=options)
+    vector = None
+    return target
+
+
+def write_codes_cog(codes_ds, recipe: dict, dest: Path, work: Path) -> dict:
+    """Decode a burn-code dataset into the two-band sprout COG, a strip at a time.
+
+    Returns counts as counts() does. No file is written when there is no road cell.
+    """
+    cols, rows = codes_ds.RasterXSize, codes_ds.RasterYSize
+    histogram = np.zeros(256, np.int64)
+    source = codes_ds.GetRasterBand(1)
+    for top in range(0, rows, STRIP_ROWS):
+        height = min(STRIP_ROWS, rows - top)
+        histogram += np.bincount(source.ReadAsArray(0, top, cols, height).ravel(), minlength=256)
+    out = {"cells": int(cols) * int(rows), "road_cells": int(histogram[1:].sum())}
+    for value in range(1, 5):
+        out[f"level_{value}"] = int(histogram[1:][LEVEL_LUT[1:] == value].sum())
+    for value, label in ((1, "paved"), (2, "unpaved")):
+        out[label] = int(histogram[1:][SURFACE_LUT[1:] == value].sum())
+    out["bytes"] = 0
+    if out["road_cells"] == 0:
+        return out
+    work.mkdir(parents=True, exist_ok=True)
+    plain = work / f"{dest.stem}-plain.tif"
+    staged = gdal.GetDriverByName("GTiff").Create(
+        str(plain), cols, rows, 2, gdal.GDT_Byte, ["TILED=YES", "BLOCKXSIZE=512", "BLOCKYSIZE=512", "BIGTIFF=YES"]
+    )
+    staged.SetGeoTransform(codes_ds.GetGeoTransform())
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    staged.SetProjection(srs.ExportToWkt())
+    bands = recipe["sprout"]["bands"]
+    for index, (label, lut) in enumerate((("level", LEVEL_LUT), ("surface", SURFACE_LUT)), start=1):
+        band = staged.GetRasterBand(index)
+        band.SetDescription(label)
+        band.SetMetadataItem("values", json.dumps({str(k): v for k, v in bands[label].items()}))
+        for top in range(0, rows, STRIP_ROWS):
+            height = min(STRIP_ROWS, rows - top)
+            band.WriteArray(lut[source.ReadAsArray(0, top, cols, height)], 0, top)
+    staged.SetMetadataItem("version", recipe["sprout"]["id"])
+    staged.SetMetadataItem("source_release", str(recipe["source"]["release"]))
+    staged = None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    gdal.Translate(str(dest), str(plain), format="COG", creationOptions=COG_OPTIONS)
+    plain.unlink()
+    out["bytes"] = dest.stat().st_size
+    return out
+
+
 def counts(codes: np.ndarray) -> dict:
     level, surface = decode(codes)
     out = {"cells": int(codes.size), "road_cells": int((level > 0).sum())}

@@ -22,8 +22,6 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).parent
 DATA = ROOT / "data" / "roads"
@@ -33,10 +31,16 @@ COMPARE_HALF = 0.15  # the 11 November 2026 comparison boxes were 0.3° on a sid
 
 
 def load_recipe(path: Path) -> dict:
+    if path.suffix == ".json":
+        return json.loads(path.read_text())
+    import yaml
+
     return yaml.safe_load(path.read_text())
 
 
 def load_boxes() -> dict[str, dict]:
+    import yaml
+
     return {b["name"]: b for b in yaml.safe_load(BOXES.read_text())["boxes"]}
 
 
@@ -108,13 +112,55 @@ def seed_query(source: str, rules: dict, bounds: tuple[float, float, float, floa
     """
 
 
-def connect():
+def block_query(source: str, rules: dict, block_bounds: tuple[float, float, float, float]) -> str:
+    """The seed rows of one 10° block: rows whose bbox centre is in the block.
+
+    The bbox test lets DuckDB skip row groups; the centre test keeps each row in one block.
+    A centre on the east or north edge belongs to the next block, except at 180° and 90°.
+    Rows are sorted along a Hilbert curve so a reader can skip row groups by bbox.
+    """
+    west, south, east, north = block_bounds
+    cx = "((bbox.xmin + bbox.xmax) / 2)"
+    cy = "((bbox.ymin + bbox.ymax) / 2)"
+    east_test = f"{cx} <= {east}" if east >= 180 else f"{cx} < {east}"
+    north_test = f"{cy} <= {north}" if north >= 90 else f"{cy} < {north}"
+    centre = f"{cx} >= {west} AND {east_test} AND {cy} >= {south} AND {north_test}"
+    rows = seed_query(source, rules, block_bounds)
+    box = f"{{'min_x': {west}, 'min_y': {south}, 'max_x': {east}, 'max_y': {north}}}::BOX_2D"
+    return f"""
+        SELECT * FROM ({rows}) AS r
+        WHERE {centre}
+        ORDER BY ST_Hilbert({cx}, {cy}, {box}), id
+    """
+
+
+def write_block(con, recipe: dict, block_bounds, dest: Path) -> dict:
+    """Write one block's seed rows to dest. Returns rows, bytes, seconds. No file when there is no row."""
+    started = time.perf_counter()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    query = block_query(overture_source(recipe), recipe["roads"], block_bounds)
+    con.execute(f"COPY ({query}) TO '{dest}' (FORMAT parquet, COMPRESSION zstd)")
+    rows = con.execute(f"SELECT count(*) FROM read_parquet('{dest}')").fetchone()[0]
+    stored = dest.stat().st_size
+    if rows == 0:
+        dest.unlink()
+        stored = 0
+    return {"rows": int(rows), "bytes": stored, "seconds": round(time.perf_counter() - started, 1)}
+
+
+def connect(work: Path | None = None, memory_limit: str | None = None):
     import duckdb
 
     con = duckdb.connect()
+    if work is not None:
+        con.execute(f"SET home_directory = '{work}'")
+        con.execute(f"SET temp_directory = '{work / 'duckdb-tmp'}'")
+    if memory_limit:
+        con.execute(f"SET memory_limit = '{memory_limit}'")
     for ext in ("httpfs", "spatial"):
         con.execute(f"INSTALL {ext}; LOAD {ext};")
     con.execute("SET geometry_always_xy = true")  # longitude, latitude, as Overture stores them
+    con.execute("SET parquet_metadata_cache = true")  # read the 128 footers once per task, not once per block
     return con
 
 
