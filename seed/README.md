@@ -81,3 +81,33 @@ The estimate before the run was 4,173,850,674 bytes, from [`cookbook/README.md`]
 The successful operation started at `2026-10-30T09:58:08Z` and ended at `2026-10-30T10:02:32Z`, 264 seconds. An earlier operation, `transferOperations/transferJobs-cropland-2024-v2-seed-15313645261421247161`, failed with `PERMISSION_DENIED` and copied nothing. The transfer service does not report peak memory. No virtual machine was started for the transfer, and none was left running. The version 1 seed was not changed.
 
 The check `seed-cropland-glad-2024-v2` was submitted at `2026-10-30T11:15:57Z`, reached `RUNNING` at `2026-10-30T11:16:48Z`, and `SUCCEEDED` at `2026-10-30T11:27:11Z`. The process took 619.6 seconds and peaked at 698,060,800 bytes. It checked 223 tiles. Each is `EPSG:4326`, `0.00025°`, uint8, with no nodata flag. Every pixel is `0` or `100`, and `100` appears in the set. The prefix still holds 5,289,882,209 bytes, one copy of each tile, now at the flat file name. Batch reports no virtual machine left for that job. The version 1 seed was not changed.
+
+## buildings 2023
+
+`seed/buildings.py` writes the TEMPO seed and checks both seeds of `cookbook/recipes/buildings-2023-v1.yaml`. The Google seed is written first, by Earth Engine, with [`gee/buildings/export_google.py`](../gee/buildings/export_google.py).
+
+```bash
+python gee/buildings/export_google.py plan
+python gee/buildings/export_google.py check --box kongoussi
+python gee/buildings/export_google.py export --blocks W010N10   # one block first
+python gee/buildings/export_google.py export
+python gee/buildings/export_google.py status
+python seed/buildings.py plan
+python seed/buildings.py submit       # after every export is COMPLETED
+python seed/buildings.py status
+python -m pytest seed cookbook gee buildings
+```
+
+- **Google:** one Earth Engine export per 10° block, 145 blocks, to `seeds/buildings/google-temporal/2023/v1/<block>.tif`. Each block is a 40,000 × 40,000 uint8 COG on the sprout grid: mean 2023 `building_presence` × 250, rounded, and 255 where Google has no 2023 data. `check` compares the export image with `buildings/ee_box.py --value mean` on one cached box. On Kongoussi, 17 November 2026, 5 of 33,852 cells differed, each by 1.
+- **TEMPO:** Batch job `seed-buildings-2023-v1`, one spot `e2-standard-2` in `europe-west1`. It downloads the 2023 Q4 index, stops if the URL list's SHA-256 differs from the recipe, and fetches the tiles 64 at a time, one zoom 4 Web Mercator tile at a time. Each source tile must be EPSG:3857, 256 × 256 on the zoom 11 grid, float32 with nodata −1, and band 1 must be −1 or 0–1. Band 1 of each group becomes one 32,768 × 32,768 COG at `seeds/buildings/tempo/2023q4/v1/z4-<x>-<y>.tif` (DEFLATE, float predictor, no overviews). A mosaic already stored is skipped, so a retry after preemption resumes.
+- **Google check:** the same job checks each block for EPSG:4326, the block's grid, uint8, nodata 255, and no value from 251 to 254. It counts the values.
+- Each seed path gets a `summary.json` with the object counts, bytes, the tiles per mosaic, and the Google histogram.
+
+A 16-tile mosaic at 5.8° E 22° N, built on the laptop on 17 November 2026, matched the source band 1 exactly and was 13% of the source bytes.
+
+### Expected cost, written 17 November 2026 before the run
+
+- **Earth Engine:** 60–90 EECU-hours, from [`cookbook/README.md`](../cookbook/README.md). Project `nature-watch-387210` is registered for noncommercial use and is not billed.
+- **Batch:** about 4.7 hours to fetch 822,199 tiles at 49 a second, as measured from the laptop, and up to 1 hour to read the Google blocks. About 6 hours of a spot `e2-standard-2` with a 50 GB disk, about $0.15–0.25.
+- **Storage in `nature-watch-bucket` (EU):** Google 5–20 GB in 145 objects. TEMPO about 2–6 GB in at most 256 objects, below the 11 GB of source tiles because band 2 is dropped. About $0.20–0.70 a month. Write operations for about 400 objects cost under $0.01.
+- **Transfer:** the tiles come from Microsoft's open data server, and traffic into Google Cloud is free. Reading the Google blocks in the same region is free.
