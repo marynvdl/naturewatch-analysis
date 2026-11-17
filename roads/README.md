@@ -16,6 +16,7 @@ python roads/sprout.py compare chinko             # road cells, all-touched agai
 python roads/tiles.py window chinko --top-zoom 11 # data/roads/tiles/chinko-z11.pmtiles
 python roads/render.py tiles data/roads/tiles/chinko-z11.pmtiles --zoom 8 --bbox 23 5.5 25 7.5
 python roads/render.py lines waterberg --zoom 13 [--class unknown]
+MAPBOX_ACCESS_TOKEN=pk... python roads/preview.py   # http://127.0.0.1:8765/preview.html: the sample archives on a Mapbox map
 python -m pytest roads
 ```
 
