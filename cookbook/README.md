@@ -100,3 +100,26 @@ The Batch route reads 627,480 tiles of 25,000 × 25,000 px in 151 manifests. A s
 **TEMPO 2023 Q4.** 822,199 tiles of 256 × 256 px float32 in the index `https://opendata.aiforgood.ai/building-density/tile_index.gpkg` (384 MB, read 16 November 2026). HEAD on a random sample of 490 tiles gave a mean of 13,317 bytes (median 4,981, largest 208,961), so about 11 GB for all of them. A Storage Transfer Service job from a URL list stores about 11 GB in `nature-watch-bucket`, about $0.25 a month. Storage Transfer from a URL list has no transfer charge. Keeping only the tiles outside Google's area would be smaller. Task 02 decides.
 
 The sprout and the PMTiles archive are later steps. They are not in these figures.
+
+## roads-2026-10-v1
+
+`recipes/roads-2026-10-v1.yaml` names the Roads seed, sprout and tiles from Overture release `2026-10-21.0`. The level rules, the burn rule, the tile encoding and the sample figures are in [`roads/README.md`](../roads/README.md).
+
+### Expected cost, written 17 November 2026 before any job
+
+Scaled from the task 01 sample. The global count comes from the Parquet footers (`roads/seed.py footers`): 353,327,860 transportation segments in 128 files, 71,962,027,313 compressed bytes, with rows in 272 blocks of 10°. A read of the `subtype` and `class` columns of 4 random files (10,949,955 rows) found 82.4% in the kept road classes, so about 291 million seed rows. Overture's bucket is AWS Open Data and not requester pays, and Google Cloud does not charge for data coming in, so reading it costs this project nothing. Storage is priced at $0.023 per GB a month, as above.
+
+| Step | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Seed (task 02) | DuckDB reads the release once, at most 72 GB, and writes GeoParquet split by 10° block | one spot `e2-standard-8`, `europe-west1`, 1–2 hours | about $0.10–0.30 | about 37 GB (129 bytes a row, as in the dense window) | about $0.86 |
+| Sprout (task 02) | burn 272 blocks of 10° (40,000 × 40,000 cells each) and write COGs, a VRT and STAC | 8 spot tasks, 4–6 task-hours in all, 16 GB memory a block or 4 strips a block | about $0.15–0.40 | 2.5–3.5 GB | about $0.06–0.08 |
+| Tiles (task 03) | top zoom 11 rendered from the sprout VRT, lower zooms reduced, sharded as cropland version 3 | spot `e2-standard-2` shards, 4–12 task-hours, plus merge and verify | about $0.30–0.80 | 1.5–4 GB | about $0.03–0.09 |
+
+How the ranges were made:
+
+- **Road length.** The dense window averages 157 m a segment. At 150–250 m a segment, 291 million segments are 44–73 million km of road.
+- **Sprout.** The dense window has 42.2 road cells per km and stores 0.78 bytes per road cell, so 1.8–3.1 billion road cells and 1.4–2.4 GB. Empty land adds about 37 KB per square degree (the sparse window), about 1 GB over the 272 blocks. One block's array is 1.6 GB, and the decode holds about 8 GB, so a block runs on a 16 GB machine or in 4 strips. Writing scales from 1.6 s per 64 million cells.
+- **Tiles.** The dense window stores 0.73 bytes per road cell at top zoom 11, the sparse one 2.5. Land with roads is taken as 100 million km², and a 512 px zoom 11 tile covers about 230 km² at a typical latitude, so about 435,000 top-zoom tiles and 580,000 in all. Cropland version 3 did 31 top-zoom tiles a second per shard. Roads warps twice per tile, so 10–30.
+- Spot prices are about $0.03–0.04 an hour for `e2-standard-2` and four times that for `e2-standard-8`. The submit step checks the current price.
+
+One-off compute is about $0.5–1.5. The seed is most of the storage. Overture does not keep every release in its public bucket, so the seed is what keeps this snapshot rebuildable. Dropping the Overture `id` column (15% of the seed) or deleting the seed after the sprout and tiles are checked would lower it.
