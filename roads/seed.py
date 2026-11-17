@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).parent
 DATA = ROOT / "data" / "roads"
 BOXES = HERE / "boxes.yaml"
-DEFAULT_RECIPE = DATA / "roads-2026-10-v1.draft.yaml"
+DEFAULT_RECIPE = ROOT / "cookbook" / "recipes" / "roads-2026-10-v1.yaml"
 COMPARE_HALF = 0.15  # the 11 November 2026 comparison boxes were 0.3° on a side
 
 

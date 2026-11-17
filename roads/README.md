@@ -2,7 +2,7 @@
 
 Scripts for the Roads layer: a seed read from Overture's transportation theme, a sprout on the stats grid, and raster PMTiles from that sprout. The recipe is [`cookbook/recipes/roads-2026-10-v1.yaml`](../cookbook/recipes/roads-2026-10-v1.yaml). The parcel is `docs/parcels/roads.md` in naturewatch-app.
 
-Task 01 ran these on the laptop for ten small boxes and two windows. Nothing here writes to the cloud yet. The global runs are tasks 02 and 03.
+Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. Nothing here writes to the cloud yet. The global runs are tasks 02 and 03.
 
 ## Run
 
@@ -93,7 +93,7 @@ A seed read's wall time is mostly listing the footers of all 128 files. Seed byt
 
 ### Top zoom
 
-Zoom 11 (about 38 m a pixel at the equator with 512 px tiles, against 28 m cells) draws continuous lines in both windows. Zoom 12 is a little sharper and 2.6 times the bytes in the dense window. Zoom 11 is proposed, the same as cropland version 3.
+Zoom 11 (about 38 m a pixel at the equator with 512 px tiles, against 28 m cells) draws continuous lines in both windows. Zoom 12 is a little sharper and 2.6 times the bytes in the dense window. Zoom 11 is chosen, the same as cropland version 3.
 
 ### Shades
 

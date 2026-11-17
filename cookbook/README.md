@@ -122,4 +122,4 @@ How the ranges were made:
 - **Tiles.** The dense window stores 0.73 bytes per road cell at top zoom 11, the sparse one 2.5. Land with roads is taken as 100 million km², and a 512 px zoom 11 tile covers about 230 km² at a typical latitude, so about 435,000 top-zoom tiles and 580,000 in all. Cropland version 3 did 31 top-zoom tiles a second per shard. Roads warps twice per tile, so 10–30.
 - Spot prices are about $0.03–0.04 an hour for `e2-standard-2` and four times that for `e2-standard-8`. The submit step checks the current price.
 
-One-off compute is about $0.5–1.5. The seed is most of the storage. Overture does not keep every release in its public bucket, so the seed is what keeps this snapshot rebuildable. Dropping the Overture `id` column (15% of the seed) or deleting the seed after the sprout and tiles are checked would lower it.
+One-off compute is about $0.5–1.5. The seed is most of the storage. Overture does not keep every release in its public bucket, so the seed is what keeps this snapshot rebuildable. The user chose on 17 November 2026 to keep the whole seed, `id` included.

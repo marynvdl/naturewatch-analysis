@@ -165,13 +165,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("window",))
     parser.add_argument("name")
-    parser.add_argument("--top-zoom", type=int, default=11)
-    parser.add_argument("--steps", type=int, default=8)
-    parser.add_argument("--full", type=float, default=1.0, help="share drawn with the darkest shade")
+    parser.add_argument("--recipe", type=Path, default=seedmod.DEFAULT_RECIPE)
+    parser.add_argument("--top-zoom", type=int, help="default tiles.max_zoom")
+    parser.add_argument("--steps", type=int, help="default tiles.share_steps")
+    parser.add_argument("--full", type=float, help="share drawn with the darkest shade, default tiles.share_full")
     parser.add_argument("--sprout", type=Path, help="default data/roads/sprout/<name>.tif")
     args = parser.parse_args()
+    spec = seedmod.load_recipe(args.recipe)["tiles"]
+    args.top_zoom = args.top_zoom or spec["max_zoom"]
+    args.steps = args.steps or spec["share_steps"]
+    args.full = args.full or spec["share_full"]
     sprout_path = args.sprout or seedmod.DATA / "sprout" / f"{args.name}.tif"
-    suffix = "" if args.full == 1.0 else f"-full{args.full:g}"
+    suffix = f"-full{args.full:g}"
     dest = seedmod.DATA / "tiles" / f"{sprout_path.stem}-z{args.top_zoom}{suffix}.pmtiles"
     record = build(sprout_path, sproutmod.window_bounds(args.name), args.top_zoom, args.steps, dest, args.full)
     print(json.dumps(record))
