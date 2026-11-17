@@ -1,0 +1,16 @@
+# Boxes for the roads recipe (task 01).
+# compare: the ten sites of the 11 November 2026 dataset comparison, 0.3° boxes centred on lat, lon.
+# window: the 2° sample windows for the sprout and the tile sample. west, south, east, north.
+boxes:
+  - {name: kocho, kind: compare, lat: 6.30443, lon: 23.85934, label: "Kocho, Chinko, Central African Republic"}
+  - {name: fode, kind: compare, lat: 5.48827, lon: 23.32071, label: "Fode, Central African Republic"}
+  - {name: bon, kind: compare, lat: 10.69653, lon: 19.47811, label: "Bon, Chad"}
+  - {name: fada, kind: compare, lat: 17.18755, lon: 21.58352, label: "Fada, Chad"}
+  - {name: kruger, kind: compare, lat: -24.47043, lon: 31.62978, label: "Kruger, South Africa"}
+  - {name: waterberg, kind: compare, lat: -24.8086, lon: 28.30529, label: "Waterberg, South Africa"}
+  - {name: suriname, kind: compare, lat: 4.12346, lon: -55.80109, label: "Suriname interior"}
+  - {name: pokola, kind: compare, lat: 1.40, lon: 16.30, label: "Pokola logging, Congo"}
+  - {name: br163, kind: compare, lat: -7.10, lon: -55.40, label: "BR-163 near Novo Progresso, Brazil"}
+  - {name: rebiana, kind: compare, lat: 23.75, lon: 20.25, label: "Rebiana sand sea, Libya"}
+  - {name: gauteng-waterberg, kind: window, bounds: [27.0, -26.5, 29.0, -24.5], label: "Dense: Johannesburg, Pretoria and the Waterberg"}
+  - {name: chinko, kind: window, bounds: [23.0, 5.5, 25.0, 7.5], label: "Sparse: Chinko, Central African Republic"}

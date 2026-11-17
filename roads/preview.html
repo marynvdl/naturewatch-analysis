@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roads sample preview</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { position: absolute; z-index: 2; left: 8px; top: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+         background: #fffe; padding: 6px 8px; border-radius: 6px; box-shadow: 0 1px 4px #0003; }
+  #map { position: absolute; inset: 0; }
+  #legend { position: absolute; z-index: 2; left: 8px; bottom: 24px; background: #fffe; padding: 6px 8px; border-radius: 6px; box-shadow: 0 1px 4px #0003; line-height: 1.6; }
+  .sw { display: inline-block; width: 22px; height: 4px; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="archive"></select>
+  <select id="basemap">
+    <option value="satellite">Satellite (app)</option>
+    <option value="standard">Standard monochrome (app)</option>
+    <option value="dark">Dark</option>
+  </select>
+  <span id="windows"></span>
+  <span id="zoom"></span>
+</div>
+<div id="map"></div>
+<div id="legend"></div>
+<script>
+// Painted as the app would: below the archive's top zoom, opacity 0.2 + 0.75 × shade / 8 from the red channel;
+// from the top zoom, colour by level and a fainter line for unpaved roads (red = level × 4 + surface).
+const C = window.ROADS;
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+  dark: { style: 'mapbox://styles/mapbox/dark-v11' },
+};
+const SHARE = [224, 33, 138];
+const SHARE_SAT = [255, 92, 207];
+const LEVELS = { 4: ['major', [215, 25, 28]], 3: ['main', [253, 141, 60]], 2: ['minor', [254, 217, 118]], 1: ['track', [221, 52, 151]] };
+const SURFACE_ALPHA = { 0: 0.9, 1: 1, 2: 0.55 };  // unknown, paved, unpaved
+const STEPS = 8;
+const rgba = (c, a) => `rgba(${c.join(',')},${a})`;
+const RED = { 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 255], 'raster-fade-duration': 0, 'raster-resampling': 'nearest' };
+
+function sharePaint(colour) {
+  const expr = ['interpolate', ['linear'], ['raster-value'], 0, rgba(colour, 0)];
+  for (let k = 1; k <= STEPS; k++) expr.push(Math.max(1, Math.round((k / STEPS) ** 2 * 255)), rgba(colour, 0.2 + 0.75 * k / STEPS));
+  return { ...RED, 'raster-color': expr };
+}
+function levelPaint() {
+  const expr = ['step', ['raster-value'], 'rgba(0,0,0,0)'];
+  for (const level of [1, 2, 3, 4]) for (const surface of [0, 1, 2]) {
+    expr.push(level * 4 + surface - 0.5, rgba(LEVELS[level][1], SURFACE_ALPHA[surface]));
+  }
+  expr.push(18.5, 'rgba(0,0,0,0)');
+  return { ...RED, 'raster-color': expr };
+}
+const topZoom = name => Number((name.match(/-z(\d+)/) || [0, 11])[1]);
+
+const P = new URLSearchParams(location.search);
+const archiveSel = document.getElementById('archive');
+for (const a of C.archives) archiveSel.add(new Option(a, a));
+archiveSel.value = P.get('a') || C.archives.find(a => a.includes('gauteng-waterberg-z11-full')) || C.archives[0];
+const basemapSel = document.getElementById('basemap');
+basemapSel.value = P.get('b') || 'satellite';
+
+const win = document.getElementById('windows');
+for (const [name, b] of Object.entries(C.windows)) {
+  const btn = document.createElement('button');
+  btn.textContent = name;
+  btn.onclick = () => {
+    const prefix = name + '-z';
+    const match = C.archives.find(a => a.startsWith(prefix) && a.includes(archiveSel.value.replace(/^.*?(-z\d+.*)$/, '$1'))) || C.archives.find(a => a.startsWith(prefix));
+    if (match) { archiveSel.value = match; addRoads(); }
+    map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 });
+  };
+  win.appendChild(btn);
+}
+
+document.getElementById('legend').innerHTML =
+  `<b>From the top zoom</b><br>` +
+  Object.values(LEVELS).map(([n, c]) => `<span class="sw" style="background:${rgba(c, 1)}"></span>${n}`).join('<br>') +
+  `<br><span style="opacity:.6">unpaved: fainter</span><br><b>Below it</b>: share of 28 m cells with a road`;
+
+mapboxgl.accessToken = C.token;
+const map = new mapboxgl.Map({
+  container: 'map', ...STYLES[basemapSel.value], projection: 'globe', center: [28, -25.5], zoom: 7, hash: true,
+});
+map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+
+function addRoads() {
+  for (const id of ['roads-share', 'roads-level']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('roads')) map.removeSource('roads');
+  const name = archiveSel.value;
+  const top = topZoom(name);
+  map.addSource('roads', { type: 'raster', url: `${location.origin}/tiles/${name}`, tileSize: 512, maxzoom: top });
+  const satellite = basemapSel.value === 'satellite';
+  map.addLayer({ id: 'roads-share', type: 'raster', source: 'roads', maxzoom: top, paint: sharePaint(satellite ? SHARE_SAT : SHARE) });
+  map.addLayer({ id: 'roads-level', type: 'raster', source: 'roads', minzoom: top, paint: levelPaint() });
+}
+map.on('style.load', addRoads);
+archiveSel.onchange = addRoads;
+basemapSel.onchange = () => { const s = STYLES[basemapSel.value]; map.setStyle(s.style, s.config ? { config: s.config } : undefined); };
+const zoomEl = document.getElementById('zoom');
+const showZoom = () => { zoomEl.textContent = `zoom ${map.getZoom().toFixed(1)} · level colours from ${topZoom(archiveSel.value)}`; };
+map.on('zoom', showZoom); map.on('load', showZoom); archiveSel.addEventListener('change', showZoom);
+</script>
+</body>
+</html>
