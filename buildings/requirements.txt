@@ -1,0 +1,9 @@
+numpy>=1.26
+pyyaml>=6
+pyproj>=3.6
+duckdb>=2.0
+earthengine-api>=1.0
+pillow>=10
+scipy>=1.11
+pytest>=8
+# GDAL Python bindings (osgeo) come with the system GDAL, 3.11 here.

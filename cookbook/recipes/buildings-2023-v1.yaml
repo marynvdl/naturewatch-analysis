@@ -1,0 +1,95 @@
+# Hand-edited catalog for the Buildings 2023 layer (Buildings 2023 parcel, task 01).
+# Google Open Buildings 2.5D Temporal 2023 where Google has data, otherwise Microsoft TEMPO 2023 Q4.
+# The measurements behind the threshold, the TEMPO rule and the grid are in buildings/README.md.
+# Expected cost and the chosen Google route are in cookbook/README.md.
+id: buildings-2023-v1
+title: Buildings 2023
+year: 2023
+extent: global
+grid:
+  crs: EPSG:4326
+  pixel_size_deg: 0.00025
+  origin: [-180, 90]
+sources:
+  google:
+    name: Google Open Buildings 2.5D Temporal
+    url: https://sites.research.google/open-buildings/
+    licence: CC BY 4.0
+    bucket: gs://open-buildings-temporal-data
+    # 151 manifests list 627,480 tiles of 25,000 x 25,000 px at 0.5 m in local UTM zones.
+    # A tile's URL is the manifest's uriPrefix followed directly by its uri, with no slash between.
+    manifests: gs://open-buildings-temporal-data/v1/manifests/*_2023_06_30.json
+    manifest_count: 151
+    tile_count: 627480
+    earth_engine: GOOGLE/Research/open-buildings-temporal/v1
+    band: building_presence  # band 3 of each COG, band-interleaved
+    nodata: -99
+    # The seed is read through Earth Engine, not from these COGs. See seeds.google.
+  tempo:
+    name: Microsoft TEMPO global building density
+    url: https://github.com/microsoft/buildings
+    licence: CDLA Permissive 2.0
+    quarter: 2023q4
+    index: https://opendata.aiforgood.ai/building-density/tile_index.gpkg
+    index_layer: tile_index_updated
+    index_column: data_2023q4
+    # Read 16 November 2026: 384 MB, 822,199 rows, every row has a 2023 Q4 URL.
+    index_sha256: c400d21b335d1de8874105141f05ad9d1bff7af11542322191ac33b75d76ab88
+    tile_count: 822199
+    # SHA-256 of the data_2023q4 URLs sorted bytewise (LC_ALL=C), one per line with a trailing newline.
+    # The seed step rebuilds the list from the index and checks this.
+    url_list_sha256: 01ddf4785b0c78d8d145d2c1b60bf6f9e748fab6854f84bfd6ca58c583cb14ce
+    url_pattern: https://opendata.aiforgood.ai/building-density/v1/2023q4/12-39-p3_ensemble_downsampled/L15-{x:04d}E-{y_tms:04d}N.tif
+    # Web Mercator zoom 11 tiles of 256 x 256 px, about 76.4 m. y_tms = 2047 - XYZ y.
+    tile_zoom: 11
+    band: 1  # building density, already a share from 0 to 1
+    nodata: -1
+seeds:
+  google:
+    id: seed-buildings-google-temporal-2023-v1
+    path: gs://nature-watch-bucket/seeds/buildings/google-temporal/2023/v1/
+    # One Earth Engine export per 10 degree block that meets a Google 2023 tile (145 blocks), on the sprout grid.
+    # Value: mean building_presence of the 2023 images, as uint8 (value / 250), 255 where Google has no data.
+    # Earth Engine reads its mean pyramid at the sprout grid. No threshold. Chosen by the user on 17 November 2026.
+    route: earth-engine
+    blocks_deg: 10
+  tempo:
+    id: seed-buildings-tempo-2023q4-v1
+    path: gs://nature-watch-bucket/seeds/buildings/tempo/2023q4/v1/
+sprout:
+  id: buildings-2023-v1
+  path: gs://nature-watch-bucket/sprouts/buildings/2023/v1/
+  bands:
+    share:
+      # Fraction of the cell covered by buildings, stored as uint8: share = value / 250.
+      dtype: uint8
+      scale: 250
+      nodata: 255
+    source:
+      dtype: uint8
+      values:
+        none: 0
+        google: 1
+        tempo: 2
+  google:
+    # The share is the seed value: mean building_presence in the cell. Not thresholded.
+    # Over the six Google-covered comparison boxes it is 1.19 times Overture's built area (buildings/README.md).
+    value: mean-presence
+    # A cell is Google where the Earth Engine export is not nodata.
+  tempo:
+    # Band 1 averaged onto the cell. A cell is kept only if a cell within seed_radius_m reaches seed_share.
+    # Otherwise it is 0. This removes TEMPO's low-density false positives on empty land.
+    # The radius is counted in cells: 72 either side, a square window.
+    seed_share: 0.15
+    seed_radius_m: 2000
+  merge: google where covered, otherwise tempo
+tiles:
+  path: gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles
+  scheme: pmtiles
+  tile_size: 512
+  encoding: share-palette
+  resampling: share
+  share_steps: 7
+  share_curve: sqrt
+  # Task 04 chooses max_zoom, the top-zoom rule, and how a parent tile combines its children
+  # (share-weighted mean as cropland, or max so lone buildings stay visible zoomed out).

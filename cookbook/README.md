@@ -72,3 +72,31 @@ The version 1 prefix is 150,779,952 bytes, which includes the 49-byte `.keep` ma
 The transfer on 30 October 2026 stored 5,289,882,209 bytes. The run record is [`seed/README.md`](../seed/README.md).
 
 The sprout and the PMTiles archive are later steps. They are not in this figure.
+
+## buildings-2023-v1
+
+`recipes/buildings-2023-v1.yaml` names the Buildings 2023 seeds, sprout and tiles: Google Open Buildings 2.5D Temporal 2023 where Google has data, otherwise Microsoft TEMPO 2023 Q4. The measurements behind the Google value, the TEMPO seed rule and the grid are in [`buildings/README.md`](../buildings/README.md).
+
+### Expected cost, written 17 November 2026 before any transfer, export or job
+
+**Google: Earth Engine, mean presence. Chosen.** For each sprout cell, Earth Engine averages `building_presence` over the 2023 images at the sprout grid. It reads its own mean pyramid, so no 0.5 m pixel is processed. One export task per 10° block writes a COG to the Google seed path. 145 blocks of 10° meet a Google 2023 tile.
+
+- Interactive profiles of six whole boxes (25 and 36 km²) took 0.092–0.130 EECU-seconds each, 0.0030–0.0042 per km². Over the 75.3 million km² of Google tile footprints (union on a 0.05° grid, including nodata) that is about 60–90 EECU-hours.
+- Project `nature-watch-387210` is `REGISTERED_NOT_COMMERCIALLY`. Noncommercial use is not billed. The export uses its monthly EECU quota.
+- Output: one byte per cell at 0.00025°, about 97 billion cells, mostly 0 or nodata. Expected 5–20 GB compressed, under $0.50 a month in `nature-watch-bucket`.
+
+**Routes not chosen**, all for the same sprout grid:
+
+| Route | Value per cell | Estimate | Built km² vs 0.5 m threshold |
+| --- | --- | --- | --- |
+| Earth Engine, threshold 4 m pixels at 0.45, then average | share of 4 m pixels at or above 0.45 | 1,800–3,200 EECU-hours | −5 to −8% |
+| Earth Engine, threshold 2 m pixels, then average | share of 2 m pixels | 7,500–13,500 EECU-hours | −1 to −2% |
+| Earth Engine, threshold 0.5 m pixels, then average | share of 0.5 m pixels | 100,000–171,000 EECU-hours | reference |
+| Batch on Google's public COGs, 0.5 m | share of 0.5 m pixels | 2,600–6,100 spot vCPU-hours, about $40–120 | reference |
+| Batch, 1 m overview | share of 1 m pixels | about half the 0.5 m Batch route | −2% |
+
+The Batch route reads 627,480 tiles of 25,000 × 25,000 px in 151 manifests. A sample of 40 of the 14,081 tile folders (1,752 tiles) averaged 29.3 MB per tile for three bands, so about 18.4 TB for 2023 and about 6 TB for band 3. The bucket is `US` multi-region and not requester pays, so reading it costs this project nothing. Decoding and thresholding one full tile took 16 CPU-seconds on the laptop.
+
+**TEMPO 2023 Q4.** 822,199 tiles of 256 × 256 px float32 in the index `https://opendata.aiforgood.ai/building-density/tile_index.gpkg` (384 MB, read 16 November 2026). HEAD on a random sample of 490 tiles gave a mean of 13,317 bytes (median 4,981, largest 208,961), so about 11 GB for all of them. A Storage Transfer Service job from a URL list stores about 11 GB in `nature-watch-bucket`, about $0.25 a month. Storage Transfer from a URL list has no transfer charge. Keeping only the tiles outside Google's area would be smaller. Task 02 decides.
+
+The sprout and the PMTiles archive are later steps. They are not in these figures.
