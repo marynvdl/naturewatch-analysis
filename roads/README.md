@@ -2,7 +2,7 @@
 
 Scripts for the Roads layer: a seed read from Overture's transportation theme, a sprout on the stats grid, and raster PMTiles from that sprout. The recipe is [`cookbook/recipes/roads-2026-10-v1.yaml`](../cookbook/recipes/roads-2026-10-v1.yaml). The parcel is `docs/parcels/roads.md` in naturewatch-app.
 
-Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. Nothing here writes to the cloud yet. The global runs are tasks 02 and 03.
+Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout are task 02, run as Batch jobs with `roads/batch.py`. The tiles are task 03.
 
 ## Run
 
@@ -103,3 +103,30 @@ Road share is small: a rural network fills 1–5% of cells, a city 20–40%. Wit
 | --- | --- | --- |
 | gauteng-waterberg | 1,159; 604; 248; 121; 122; 6; 0; 0 | 234; 659; 457; 307; 186; 132; 64; 221 |
 | chinko | 169; 0; 0; 0; 0; 0; 0; 0 | 130; 38; 1; 0; 0; 0; 0; 0 |
+
+## Global seed and sprout (task 02)
+
+```bash
+python roads/batch.py submit seed --pilot 30S_020E [--approved]   # one block; prints the job, submits only with --approved
+python roads/batch.py submit seed --approved                      # all 648 blocks in 20 tasks
+python roads/batch.py records seed                                # totals from the seed records written so far
+python roads/batch.py submit sprout --approved                    # after every seed block has a record
+python roads/batch.py collect                                     # the VRT and STAC files, after every sprout block has a record
+```
+
+**Blocks.** 648 blocks of 10°, named from the south-west corner (`30S_020E`). A segment belongs to the block that holds the centre of its `bbox`, so each seed row is stored once (`blocks.py`). The blocks are cut, north to south and west to east, into 20 runs of similar weight: footer rows for the seed, the rows of a block and its neighbours for the sprout. One Batch task does one run.
+
+**Seed.** A task opens one DuckDB session, so the 128 Overture footers are read once per task. For each block it reads the row groups whose bbox meets the block, keeps the rows whose centre is in it, sorts them along a Hilbert curve over the block and writes `<block>.parquet` and `<block>.json` under the seed path. A block with no row writes only the record. Spot `e2-standard-4`, DuckDB limited to 10 GB.
+
+**Sprout.** For each block a task copies the seed files of the block and its eight neighbours (keeping the ones the next block needs), and DuckDB writes the rows whose bbox meets the block, padded by a cell, to one FlatGeobuf sorted by burn code, with no spatial index so the order holds. GDAL burns it in one pass with `ALL_TOUCHED`, so a later, higher code wins a cell. The codes are decoded in strips of 2,048 rows into the two bands and written as a COG under `blocks/`, with a record. A block without a road cell writes only the record. `collect` writes `roads-2026-10.vrt` over the COGs, with no nodata, so a block without a COG reads 0, and `collection.json` and `roads-2026-10-v1.json`. On the two task 01 windows, the one-pass burn gives the same cells as the twelve-pass `burn` of task 01.
+
+A record is written after its object, so a block with a record is done, and a rerun of the same job skips it. Batch retries a task up to 3 times, and retries a spot preemption (exit 50001) separately. A sprout pilot writes to `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/`, since its neighbours' seed blocks may not exist yet. The container is `ghcr.io/osgeo/gdal:ubuntu-small-3.11.4` with the DuckDB 2.0.0 wheel copied to the scratch prefix.
+
+### Runs
+
+**Seed pilot, block `30S_020E`.** Submitted 17 November 2026 at 17:54 UTC, approved with the task file (expected under $0.05 with the sprout pilot). One spot `e2-standard-4`, 50 GB disk.
+
+- job: `roads-2026-10-v1-seed-pilot-30s-020e-202611171753`, `europe-west1`
+- output: `gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/30S_020E.parquet` and `30S_020E.json`; the full run skips this block
+- status: `gcloud batch jobs describe roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
