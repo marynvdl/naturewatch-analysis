@@ -1,0 +1,38 @@
+# Comparison boxes for the Buildings 2023 recipe (task 01) and the sprout check (task 03).
+# size_km is the side of a square centred on lat, lon. compare.py snaps it outward to the sprout grid.
+# kind: settlement boxes are the 10 November 2026 comparison, centred on a settlement.
+#       empty boxes are land with no buildings where Google Temporal 2023 has data.
+#       They measure TEMPO's false positives.
+boxes:
+  - {name: kongoussi, kind: settlement, lat: 13.326, lon: -1.533, size_km: 5, label: "Rural Burkina Faso (Kongoussi)"}
+  - {name: mopti, kind: settlement, lat: 14.470, lon: -4.180, size_km: 5, label: "Central Mali (Mopti villages)"}
+  - {name: timia, kind: settlement, lat: 18.103, lon: 8.776, size_km: 5, label: "Aïr, Niger (Timia)"}
+  - {name: bardai, kind: settlement, lat: 21.356, lon: 17.000, size_km: 5, label: "Tibesti, Chad (Bardaï)"}
+  - {name: mueda, kind: settlement, lat: -11.660, lon: 39.546, size_km: 5, label: "Northern Mozambique (Mueda)"}
+  - {name: bria, kind: settlement, lat: 6.537, lon: 21.987, size_km: 5, label: "Bria, Central African Republic"}
+  - {name: saint-flour, kind: settlement, lat: 45.034, lon: 3.093, size_km: 5, label: "Rural France (Saint-Flour)"}
+  - {name: in-salah-south, kind: empty, lat: 20.8892, lon: 5.8708, size_km: 6, label: "Southern Algeria, TEMPO false positives seen 16 November 2026"}
+  - {name: tanezrouft, kind: empty, lat: 21.5, lon: -0.5, size_km: 6, label: "Tanezrouft, Mali"}
+  - {name: majabat, kind: empty, lat: 20.0, lon: -8.0, size_km: 6, label: "Majabat al-Koubra, Mauritania"}
+  - {name: aouker, kind: empty, lat: 18.3, lon: -11.5, size_km: 6, label: "Aouker dunes, Mauritania"}
+  - {name: tenere, kind: empty, lat: 19.0, lon: 11.0, size_km: 6, label: "Ténéré, Niger"}
+  - {name: djado-north, kind: empty, lat: 22.3, lon: 12.0, size_km: 6, label: "North of Djado, Niger, near Google's edge"}
+  - {name: djourab, kind: empty, lat: 17.0, lon: 19.0, size_km: 6, label: "Djourab, Chad"}
+  - {name: nubian-sudan, kind: empty, lat: 19.5, lon: 28.5, size_km: 6, label: "Northern Sudan"}
+  - {name: egypt-south, kind: empty, lat: 22.4, lon: 30.5, size_km: 6, label: "Southern Egypt, near Google's edge"}
+  - {name: hoggar-west, kind: empty, lat: 22.4, lon: 3.0, size_km: 6, label: "West of the Hoggar, Algeria, near Google's edge"}
+  - {name: mali-north, kind: empty, lat: 22.4, lon: -3.0, size_km: 6, label: "Northern Mali, near Google's edge"}
+# Found by `compare.py tempo-scan -17 15 35 23`: the 6 km window with the most TEMPO pixels between 0 and 0.05 in each noisy tile.
+  - {name: tagant-east, kind: empty, lat: 17.2238, lon: -9.0874, size_km: 6, label: "East of Tagant, Mauritania"}
+  - {name: hodh-north, kind: empty, lat: 16.8923, lon: -5.0705, size_km: 6, label: "Northern Hodh, Mali border"}
+  - {name: in-salah-south-north, kind: empty, lat: 21.2148, lon: 5.8718, size_km: 6, label: "Southern Algeria, 36 km north of the first box"}
+  - {name: in-salah-south-south, kind: empty, lat: 20.6074, lon: 5.8547, size_km: 6, label: "Southern Algeria, 31 km south of the first box"}
+  - {name: ahnet, kind: empty, lat: 21.4892, lon: 3.5915, size_km: 6, label: "Ahnet, Algeria"}
+  - {name: borkou-north, kind: empty, lat: 18.3386, lon: 19.0142, size_km: 6, label: "Borkou, Chad"}
+  - {name: borkou-south, kind: empty, lat: 18.2473, lon: 19.1117, size_km: 6, label: "Borkou, Chad, second window"}
+  - {name: trarza, kind: empty, lat: 17.8641, lon: -14.1603, size_km: 6, label: "Trarza, Mauritania"}
+# Sparse settlement outside Google's area, where TEMPO is the only source. They test how a floor or a seed rule treats scattered real buildings.
+  - {name: kansas, kind: sparse, lat: 38.55, lon: -98.75, size_km: 6, label: "Farmsteads, central Kansas, United States"}
+  - {name: ti-tree, kind: sparse, lat: -22.13, lon: 133.42, size_km: 6, label: "Ti Tree and stations, Northern Territory, Australia"}
+  - {name: korgalzhyn, kind: sparse, lat: 50.58, lon: 70.01, size_km: 6, label: "Korgalzhyn, steppe village, Kazakhstan"}
+  - {name: lairg, kind: sparse, lat: 58.03, lon: -4.42, size_km: 6, label: "Lairg and crofts, Scottish Highlands"}

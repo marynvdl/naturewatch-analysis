@@ -28,6 +28,7 @@ def load_recipes():
 def test_the_catalog_lists_the_cropland_and_places_recipes():
     loaded = load_recipes()
     assert [name for name, _ in loaded] == [
+        "buildings-2023-v1.yaml",
         "cropland-2024-v2.yaml",
         "cropland-2024-v3.yaml",
         "cropland-2024.yaml",
@@ -172,3 +173,20 @@ def test_the_global_recipe_names_version_2_and_every_source_tile():
     assert recipe["tiles"]["scheme"] == "pmtiles"
     assert recipe["tiles"]["encoding"] == "class-value"
     assert recipe["tiles"]["resampling"] == "q3"
+
+
+def test_the_buildings_recipe_names_both_sources_and_the_merge():
+    recipe = dict(load_recipes())["buildings-2023-v1.yaml"]
+    assert recipe["id"] == recipe["sprout"]["id"] == "buildings-2023-v1"
+    assert recipe["grid"] == {"crs": "EPSG:4326", "pixel_size_deg": 0.00025, "origin": [-180, 90]}
+    assert recipe["seeds"]["google"]["path"] == "gs://nature-watch-bucket/seeds/buildings/google-temporal/2023/v1/"
+    assert recipe["seeds"]["tempo"]["path"] == "gs://nature-watch-bucket/seeds/buildings/tempo/2023q4/v1/"
+    assert recipe["sprout"]["path"] == "gs://nature-watch-bucket/sprouts/buildings/2023/v1/"
+    assert recipe["sprout"]["bands"]["source"]["values"] == {"none": 0, "google": 1, "tempo": 2}
+    assert recipe["sprout"]["google"]["value"] == "mean-presence"
+    assert recipe["seeds"]["google"]["route"] == "earth-engine"
+    assert recipe["sprout"]["tempo"]["seed_share"] > 0
+    assert recipe["sources"]["tempo"]["tile_count"] == 822199
+    assert recipe["sources"]["google"]["tile_count"] == 627480
+    assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles"
+    assert "max_zoom" not in recipe["tiles"]
