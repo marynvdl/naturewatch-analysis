@@ -158,11 +158,16 @@ def block_region(block: Block):
 
 
 def existing_names(recipe: dict) -> set[str]:
-    from google.cloud import storage
+    """Uses the gcloud login, not application default credentials."""
+    import subprocess
 
-    bucket, prefix = split_gs(recipe["seeds"]["google"]["path"])
-    blobs = storage.Client(project=PROJECT).list_blobs(bucket, prefix=prefix + "/")
-    return {Path(b.name).stem for b in blobs if b.name.endswith(".tif")}
+    result = subprocess.run(
+        ["gcloud", "storage", "ls", recipe["seeds"]["google"]["path"], f"--project={PROJECT}"],
+        text=True, capture_output=True,
+    )
+    if result.returncode != 0 and "matched no objects" not in result.stderr:
+        raise SystemExit(result.stderr)
+    return {Path(line).stem for line in result.stdout.split() if line.endswith(".tif")}
 
 
 def our_tasks():

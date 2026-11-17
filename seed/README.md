@@ -111,3 +111,11 @@ A 16-tile mosaic at 5.8° E 22° N, built on the laptop on 17 November 2026, mat
 - **Batch:** about 4.7 hours to fetch 822,199 tiles at 49 a second, as measured from the laptop, and up to 1 hour to read the Google blocks. About 6 hours of a spot `e2-standard-2` with a 50 GB disk, about $0.15–0.25.
 - **Storage in `nature-watch-bucket` (EU):** Google 5–20 GB in 145 objects. TEMPO about 2–6 GB in at most 256 objects, below the 11 GB of source tiles because band 2 is dropped. About $0.20–0.70 a month. Write operations for about 400 objects cost under $0.01.
 - **Transfer:** the tiles come from Microsoft's open data server, and traffic into Google Cloud is free. Reading the Google blocks in the same region is free.
+
+### Run, 17 November 2026
+
+Approved by the user on 17 November 2026.
+
+| Step | Id | Status | Cancel |
+| --- | --- | --- | --- |
+| Trial export, block W010N10 | Earth Engine task `TVOYYSMBFPPUR5VT2ZWVEXOY` | `python gee/buildings/export_google.py status` | `earthengine task cancel TVOYYSMBFPPUR5VT2ZWVEXOY` |
