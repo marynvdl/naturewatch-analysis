@@ -167,3 +167,10 @@ Reading Overture costs nothing, and reading the seed inside `europe-west1` is fr
 - tasks: `gcloud batch tasks list --job=roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
 - totals: `python roads/batch.py records sprout`
+- result: cancelled at about 07:20 UTC after 6 of 20 tasks failed. A block that its neighbours' roads do not reach, such as open sea, made DuckDB leave an empty FlatGeobuf that GDAL could not open, and every retry failed the same way. Only 4–5 machines ran at once: 100 GB `pd-balanced` disks count against the region's 500 GB `SSD_TOTAL_GB` quota. 51 blocks were written and checked by their records; the rerun skips them. Fixed in `write_burn_source`, with a test.
+
+**Sprout, all blocks, second submit.** 18 November 2026 at 07:25 UTC. As above, with `pd-standard` disks, which count against the 4,096 GB `DISKS_TOTAL_GB` quota. The region's 24 `E2_CPUS` allow 12 of the 20 tasks at once.
+
+- job: `roads-2026-10-v1-sprout-202611180725`, `europe-west1`
+- status: `gcloud batch jobs describe roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
