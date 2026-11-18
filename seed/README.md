@@ -120,6 +120,8 @@ Approved by the user on 17 November 2026.
 | --- | --- | --- | --- |
 | Trial export, block W010N10 | Earth Engine task `TVOYYSMBFPPUR5VT2ZWVEXOY` | `python gee/buildings/export_google.py status` | `earthengine task cancel TVOYYSMBFPPUR5VT2ZWVEXOY` |
 | Exports of the other 144 blocks, started about 10:05 UTC | Earth Engine tasks named `buildings-google-2023-<block>` | `python gee/buildings/export_google.py status` | `earthengine task cancel <id>` for each id that `status` lists |
-| Batch job, after every export is `COMPLETED` | `seed-buildings-2023-v1` | `gcloud batch jobs describe seed-buildings-2023-v1 --location=europe-west1 --project=nature-watch-387210` | `gcloud batch jobs delete seed-buildings-2023-v1 --location=europe-west1 --project=nature-watch-387210` |
+| Batch job, submitted 2026-11-18 06:29 UTC | `seed-buildings-2023-v1` | `gcloud batch jobs describe seed-buildings-2023-v1 --location=europe-west1 --project=nature-watch-387210` | `gcloud batch jobs delete seed-buildings-2023-v1 --location=europe-west1 --project=nature-watch-387210` |
 
 The trial block W010N10 completed at 09:57 UTC: 50,015,473 bytes, 3,022 EECU-seconds. Its header is right: 40,000 × 40,000, origin −10°, 20°, 0.00025°, EPSG:4326, uint8, nodata 255, LZW, five overviews. The approximate maximum is 240. Central Ouagadougou averages 51, a share of 0.21. W010N10 lies wholly inside Google's coverage, which is 63 times its area, so the 145 blocks should use about 53 EECU-hours.
+
+All 145 exports completed by 2026-11-17 23:03 UTC, with none failed. Earth Engine ran two at a time. The Google seed holds 145 objects, 4,985,531,897 bytes, and nothing else. The tasks used 93.5 EECU-hours, above the 53 projected from the trial block and the 60–90 estimate. The noncommercial project is not billed for them.
