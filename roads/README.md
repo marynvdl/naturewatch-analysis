@@ -2,7 +2,7 @@
 
 Scripts for the Roads layer: a seed read from Overture's transportation theme, a sprout on the stats grid, and raster PMTiles from that sprout. The recipe is [`cookbook/recipes/roads-2026-10-v1.yaml`](../cookbook/recipes/roads-2026-10-v1.yaml). The parcel is `docs/parcels/roads.md` in naturewatch-app.
 
-Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. Nothing here writes to the cloud yet. The global runs are tasks 02 and 03.
+Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout were written on 18 November 2026 by Batch jobs from `roads/batch.py` (task 02). The tiles are task 03.
 
 ## Run
 
@@ -103,3 +103,91 @@ Road share is small: a rural network fills 1–5% of cells, a city 20–40%. Wit
 | --- | --- | --- |
 | gauteng-waterberg | 1,159; 604; 248; 121; 122; 6; 0; 0 | 234; 659; 457; 307; 186; 132; 64; 221 |
 | chinko | 169; 0; 0; 0; 0; 0; 0; 0 | 130; 38; 1; 0; 0; 0; 0; 0 |
+
+## Global seed and sprout (task 02)
+
+```bash
+python roads/batch.py submit seed --pilot 30S_020E [--approved]   # one block; prints the job, submits only with --approved
+python roads/batch.py submit seed --approved                      # all 648 blocks in 20 tasks
+python roads/batch.py records seed                                # totals from the seed records written so far
+python roads/batch.py submit sprout --approved                    # after every seed block has a record
+python roads/batch.py collect                                     # the VRT and STAC files, after every sprout block has a record
+```
+
+**Blocks.** 648 blocks of 10°, named from the south-west corner (`30S_020E`). A segment belongs to the block that holds the centre of its `bbox`, so each seed row is stored once (`blocks.py`). The blocks are cut, north to south and west to east, into 20 runs of similar weight: footer rows for the seed, the rows of a block and its neighbours for the sprout. One Batch task does one run.
+
+**Seed.** A task opens one DuckDB session, so the 128 Overture footers are read once per task. For each block it reads the row groups whose bbox meets the block, keeps the rows whose centre is in it, sorts them along a Hilbert curve over the block and writes `<block>.parquet` and `<block>.json` under the seed path. A block with no row writes only the record. Spot `e2-standard-4`, DuckDB limited to 10 GB.
+
+**Sprout.** For each block a task copies the seed files of the block and its eight neighbours (keeping the ones the next block needs), and DuckDB writes the rows whose bbox meets the block, padded by a cell, to one FlatGeobuf sorted by burn code, with no spatial index so the order holds. GDAL burns it in one pass with `ALL_TOUCHED`, so a later, higher code wins a cell. The codes are decoded in strips of 2,048 rows into the two bands and written as a COG under `blocks/`, with a record. A block without a road cell writes only the record. `collect` writes `roads-2026-10.vrt` over the COGs, with no nodata, so a block without a COG reads 0, and `collection.json` and `roads-2026-10-v1.json`. On the two task 01 windows, the one-pass burn gives the same cells as the twelve-pass `burn` of task 01.
+
+A record is written after its object, so a block with a record is done, and a rerun of the same job skips it. Batch retries a task up to 3 times, and retries a spot preemption (exit 50001) separately. A sprout pilot writes to `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/`, since its neighbours' seed blocks may not exist yet. The container is `ghcr.io/osgeo/gdal:ubuntu-small-3.11.4` with the DuckDB 2.0.0 wheel copied to the scratch prefix.
+
+### Runs
+
+**Seed pilot, block `30S_020E`.** Submitted 17 November 2026 at 17:54 UTC, approved with the task file (expected under $0.05 with the sprout pilot). One spot `e2-standard-4`, 50 GB disk.
+
+- job: `roads-2026-10-v1-seed-pilot-30s-020e-202611171753`, `europe-west1`
+- output: `gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/30S_020E.parquet` and `30S_020E.json`; the full run skips this block
+- status: `gcloud batch jobs describe roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 57 s. `30S_020E`: 1,995,149 rows, 253,013,161 bytes (127 a row), 44.2 s for the block, peak memory 4.4 GB. Its rows that meet the gauteng-waterberg window are the 715,036 rows of task 01, the same ids.
+
+**Sprout pilot, block `30S_020E`.** Submitted 17 November 2026 at 18:05 UTC. One spot `e2-standard-2`, 100 GB disk. Only this block's seed existed, so roads from its neighbours are missing near its edges (`seed_missing` in the record).
+
+- job: `roads-2026-10-v1-sprout-pilot-30s-020e-202611171804`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/30S_020E.tif` and `.json`, removed on 18 November 2026
+- result: succeeded, run duration 92 s. 1,995,149 features, 1.6 billion cells, 26,306,817 road cells (track 10,881,011; minor 9,653,522; main 5,210,866; major 561,418), 29,245,015 bytes (1.11 a road cell), 84.0 s for the block of which 4.4 s copying the seed, peak memory 3.6 GB.
+
+**Window check.** The gauteng-waterberg window cut from the pilot COG against the task 01 window sprout: 98 of 64,000,000 cells differ, and the window has 27 fewer road cells (4,744,115 against 4,744,142). Each of the 87 cells that is a road cell in one and not the other has a road cell beside it in both; 2 road cells change level and 9 change only surface. These are lines that pass within rounding error of a cell corner, where `ALL_TOUCHED` gives a different answer for a different raster extent or machine: burning the same window rows on the laptop onto the whole block's raster still differs from the pilot in 67 cells. Every Batch task burns a whole block on the same image, so the global sprout is consistent with itself.
+
+**Revised cost, from the pilots.** For approval before the full jobs.
+
+| Job | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Seed | 648 blocks in 20 tasks; 291 million rows at 44 s per 2 million, plus about 1 s for each empty block and a few minutes of start-up per task | spot `e2-standard-4`, 2–5 task-hours, about 15–30 minutes of wall time | about $0.15–0.40 | about 37 GB | about $0.85 |
+| Sprout | 648 blocks in 20 tasks; about 300 have roads, at 60–180 s each with the neighbour copies; the rest write only a record | spot `e2-standard-2`, 5–15 task-hours, about 20–45 minutes of wall time | about $0.15–0.60 | 2–3.5 GB (1.1 bytes a road cell, 1.8–3.1 billion road cells) | about $0.05–0.08 |
+
+Reading Overture costs nothing, and reading the seed inside `europe-west1` is free. Both pilots together used about 2.5 machine-minutes, under $0.01.
+
+**Seed, all blocks.** Approved by the user on 18 November 2026 with the revised cost above. Submitted at 06:33 UTC: 20 tasks, 648 blocks, spot `e2-standard-4`, 50 GB disk, up to 3 retries a task.
+
+- job: `roads-2026-10-v1-seed-202611180633`, `europe-west1`
+- output: `gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/`, `<block>.parquet` and `<block>.json`
+- status: `gcloud batch jobs describe roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python roads/batch.py records seed`
+- result: succeeded, run duration 1,478 s (24.6 minutes), 20 of 20 tasks, no failed retry. 648 records, 363 blocks with rows: 307,681,940 rows, 41,171,304,479 bytes. Block time summed to 8,020 s (2.2 hours). The densest block, `40N_000E`, has 13,662,495 rows (2.11 GB) and took 350 s, at a peak of 12.2 GB.
+
+**Sprout, all blocks.** Submitted 18 November 2026 at 07:04 UTC: 20 tasks, 648 blocks, spot `e2-highmem-2` (16 GB), 100 GB disk, up to 3 retries a task. The machine is larger than the pilot's `e2-standard-2`: `40N_000E` and its neighbours hold 61,884,677 rows, 31 times the pilot. That adds about $0.10 at most, and the whole run stays under the approved $1.0.
+
+- job: `roads-2026-10-v1-sprout-202611180704`, `europe-west1`
+- output: `gs://nature-watch-bucket/sprouts/roads/2026-10/v1/blocks/`, `<block>.tif` and `<block>.json`
+- status: `gcloud batch jobs describe roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python roads/batch.py records sprout`
+- result: cancelled at about 07:20 UTC after 6 of 20 tasks failed. A block that its neighbours' roads do not reach, such as open sea, made DuckDB leave an empty FlatGeobuf that GDAL could not open, and every retry failed the same way. Only 4–5 machines ran at once: 100 GB `pd-balanced` disks count against the region's 500 GB `SSD_TOTAL_GB` quota. 51 blocks were written and checked by their records; the rerun skips them. Fixed in `write_burn_source`, with a test.
+
+**Sprout, all blocks, second submit.** 18 November 2026 at 07:25 UTC. As above, with `pd-standard` disks, which count against the 4,096 GB `DISKS_TOTAL_GB` quota. The region's 24 `E2_CPUS` allow 12 of the 20 tasks at once.
+
+- job: `roads-2026-10-v1-sprout-202611180725`, `europe-west1`
+- status: `gcloud batch jobs describe roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 4,884 s (81 minutes), 20 of 20 tasks. 648 records, 367 blocks with road cells. `collect` wrote `roads-2026-10.vrt`, `collection.json` and `roads-2026-10-v1.json` at 09:31 UTC.
+
+### Global result
+
+| | Seed | Sprout |
+| --- | --- | --- |
+| Blocks with data | 363 | 367 |
+| Rows or features | 307,681,940 rows | 307,820,053 features burned (a road that crosses a block edge is burned in each block it reaches) |
+| Road cells | | 4,020,450,736: track 1,889,210,878; minor 1,296,023,376; main 694,017,118; major 141,199,364 |
+| Road cells by surface | | paved 565,921,241; unpaved 843,373,541; the rest unknown |
+| Bytes stored | 41,171,418,381 with the records | 4,893,546,903 with the VRT and STAC files |
+| Block time summed | 8,020 s | 33,912 s, plus 3,925 s in the cancelled run |
+| Peak memory | 12.2 GB (`40N_000E`) | 8.7 GB |
+
+**Check against task 01.** Read through the published VRT: the chinko window is the task 01 sprout cell for cell. The gauteng-waterberg window has the same 98 corner-touch cells as the pilot (see the window check above) and is the pilot cell for cell. A cell in open sea reads 0.
+
+**Cost.** At spot prices of about $0.07 an hour for `e2-standard-4` and $0.045 for `e2-highmem-2`: the seed, about 3 task-hours with start-up, is about $0.20; the sprout, about 11.5 task-hours with start-up and the cancelled run, is about $0.50, plus about $0.06 of standard disk. About $0.75 in all, inside the approved $1.0. Reading Overture and the seed cost nothing. Storage is about $0.95 a month for the seed and $0.11 for the sprout at $0.023 per GB. Both are above the estimate (37 GB and 2–3.5 GB): Overture has 6% more road rows than the footer sample implied, and there are 4.0 billion road cells against 1.8–3.1 billion.

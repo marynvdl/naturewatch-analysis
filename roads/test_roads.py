@@ -159,3 +159,98 @@ def test_encode_round_trip():
     red = transcode.decode_rgba(tiles.encode(tiles.RoadTile(share, code, 11), 8))
     assert red[0, :4, 0].tolist() == [0, 4, 9, 17]
     assert red[0, 0, 3] == 0
+
+
+# ---- global blocks (task 02) ----------------------------------------------------------
+
+import blocks  # noqa: E402
+
+
+def test_block_names_and_bounds():
+    assert blocks.name(-30, 20) == "30S_020E"
+    assert blocks.name(0, -180) == "00N_180W"
+    assert blocks.bounds("30S_020E") == (20.0, -30.0, 30.0, -20.0)
+    assert blocks.corner("80N_170E") == (80, 170)
+    assert len(blocks.all_blocks()) == 648 and len(set(blocks.all_blocks())) == 648
+    with pytest.raises(ValueError):
+        blocks.corner("05N_020E")
+
+
+def test_block_of_point_edges():
+    assert blocks.of_point(28.0, -25.0) == "30S_020E"
+    assert blocks.of_point(30.0, -20.0) == "20S_030E"  # east and north edges belong to the next block
+    assert blocks.of_point(180.0, 90.0) == "80N_170E"  # except at 180° and 90°
+    assert blocks.of_point(-180.0, -90.0) == "90S_180W"
+
+
+def test_neighbours_wrap_and_stop_at_poles():
+    around = blocks.neighbours("00N_170E")
+    assert len(around) == 8 and "00N_180W" in around and "10S_180W" in around and "10N_160E" in around
+    assert len(blocks.neighbours("80N_000E")) == 5
+    assert len(blocks.neighbours("90S_180W")) == 5 and "90S_170E" in blocks.neighbours("90S_180W")
+
+
+def test_groups_cover_every_block_in_order():
+    weights = {"30S_020E": 1e6, "40N_000E": 3e6, "40N_010E": 2e6}
+    out = blocks.groups(weights, 20, minimum=1000)
+    assert len(out) <= 20
+    assert [b for g in out for b in g] == blocks.all_blocks()
+    heavy = [g for g in out if "40N_000E" in g][0]
+    assert "30S_020E" not in heavy
+
+
+def test_footer_weights_keys():
+    assert blocks.footer_weights({"blocks": {"-30_20": {"rows": 5}, "unknown": {"rows": 1}}}) == {"30S_020E": 5.0}
+
+
+def test_block_query_keeps_each_row_once():
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    con.execute("INSTALL spatial; LOAD spatial;")
+    # centres at 19.9995 (west block), 20.0005 (this block), 29.9995 (this block), 30.0005 (east block)
+    lons = (19.999, 20.0, 29.999, 30.0)
+    con.execute("CREATE TABLE src AS " + " UNION ALL ".join(segment("primary", lon=x, lat=-25.0) for x in lons))
+    kept = {r[0] for r in con.execute(seed.block_query("src", RECIPE["roads"], blocks.bounds("30S_020E"))).fetchall()}
+    assert kept == {"primary-20.0", "primary-29.999"}
+    west = {r[0] for r in con.execute(seed.block_query("src", RECIPE["roads"], blocks.bounds("30S_010E"))).fetchall()}
+    assert west == {"primary-19.999"}
+
+
+def test_burn_source_matches_burn_and_filters_neighbours(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    con.execute("INSTALL spatial; LOAD spatial;")
+    lines = [
+        ("track", "unpaved", "LINESTRING(0.0001 0.00012, 0.0009 0.00012)"),
+        ("main", None, "LINESTRING(0.0001 0.00013, 0.0004 0.00013)"),
+        ("main", "paved", "LINESTRING(0.0002 0.00013, 0.0003 0.00013)"),
+        ("minor", "paved", "LINESTRING(0.00087 0.0001, 0.00087 0.0009)"),
+    ]
+    def table(items):
+        return " UNION ALL ".join(
+            f"SELECT '{lvl}' AS level, {('NULL' if s is None else repr(s))}::VARCHAR AS surface, "
+            f"ST_GeomFromText('{w}') AS geometry, "
+            f"{{'xmin': ST_XMin(ST_GeomFromText('{w}')), 'xmax': ST_XMax(ST_GeomFromText('{w}')), "
+            f"'ymin': ST_YMin(ST_GeomFromText('{w}')), 'ymax': ST_YMax(ST_GeomFromText('{w}'))}} AS bbox"
+            for lvl, s, w in items
+        )
+    here, there = tmp_path / "here.parquet", tmp_path / "there.parquet"
+    con.execute(f"COPY ({table(lines)}) TO '{here}' (FORMAT parquet)")
+    con.execute(f"COPY ({table([('major', 'paved', 'LINESTRING(0.01 0.01, 0.02 0.02)')])}) TO '{there}' (FORMAT parquet)")
+    bounds = (0.0, 0.0, 0.001, 0.001)
+    source = tmp_path / "burn.fgb"
+    assert sprout.write_burn_source(con, [str(here), str(there)], bounds, RECIPE, source) == 4  # the far road is left out
+    nowhere = tmp_path / "nowhere.fgb"
+    assert sprout.write_burn_source(con, [str(there)], bounds, RECIPE, nowhere) == 0  # nothing reaches in
+    assert not nowhere.exists()
+    burned = sprout.burn_source(source, bounds, RECIPE)
+    codes = burned.GetRasterBand(1).ReadAsArray()
+    assert (codes == sprout.burn(here, bounds, RECIPE)).all()
+    recipe = {**RECIPE, "sprout": {**RECIPE["sprout"], "id": "roads-test"}}
+    record = sprout.write_codes_cog(burned, recipe, tmp_path / "b.tif", tmp_path)
+    level, surface = sprout.decode(codes)
+    assert record["road_cells"] == int((level > 0).sum())
+    assert record["level_3"] == int((level == 3).sum()) and record["paved"] == int(((level > 0) & (surface == 1)).sum())
+    from osgeo import gdal
+    written = gdal.Open(str(tmp_path / "b.tif")).ReadAsArray()
+    assert (written[0] == level).all() and (written[1] == surface).all()
