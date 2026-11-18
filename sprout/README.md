@@ -256,3 +256,15 @@ Two blocks, approved with the task file for under $0.05: `E000N20` (Google's edg
 - **Stored:** a sparse Google block is a few MB, and a dense TEMPO block like `E000N40` is 158 MB. The Google seed is 5.0 GB over 145 blocks, and perhaps 60–100 TEMPO blocks are dense, so about 10–25 GB, $0.25–0.60 a month at $0.023 per GB.
 - **Transfer:** the seeds and the sprout are all in `nature-watch-bucket` (EU), read from `europe-west1`, so no egress. About 1,000 write operations, under $0.01.
 - About $2.50 at most in all, with storage of $0.25–0.60 a month after it. The pilot objects in the scratch prefix are deleted once the full run is checked.
+
+### Full run
+
+Approved by the user on 18 November 2026 with the expected cost above. Submitted at 14:07 UTC: 24 tasks, 488 blocks, 12 at a time, spot `e2-standard-2`, 50 GB `pd-standard` disk, up to 3 retries a task.
+
+- job: `sprout-buildings-2023-v1-202611181407`, `europe-west1`
+- output: `gs://nature-watch-bucket/sprouts/buildings/2023/v1/blocks/`, `<block>.tif` and `<block>.json`
+- status: `gcloud batch jobs describe sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- totals so far: `python sprout/buildings.py records`
+- after it finishes: `python sprout/buildings.py collect`, then `python sprout/buildings.py check`
