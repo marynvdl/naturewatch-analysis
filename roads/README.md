@@ -226,3 +226,12 @@ python roads/tiles.py local --sources DIR --work DIR               # the same fl
 | Merge | fetch the shards, write the archive, rebuild 16 zoom 8 subtrees from the sprout VRT, upload | one spot `e2-standard-4`, 60 GB `pd-standard`, about 1 hour | about $0.10 | 4–7 GB (1.0–1.8 bytes a road cell; the task 01 windows stored 0.73 dense and 2.5 sparse) | about $0.09–0.16 |
 
 About $0.7–1.4 in all, against $0.30–0.80 in the first estimate: the sprout has 4.0 billion road cells against 1.8–3.1 billion, and a zoom 11 tile takes 0.12 s against the 0.03–0.1 s assumed. Reads of the sprout and the shards inside `europe-west1` are free. Counting the pilot's road cells copied three block COGs (69 MB) to the laptop, under $0.01.
+
+**Shards, all.** Approved by the user on 18 November 2026 with the revised cost above; the Gauteng pilot was skipped. Submitted at 11:12 UTC: 694 tasks, one shard each, 12 at a time, spot `e2-standard-2`, 30 GB `pd-standard`, up to 3 retries a task. Shard `5-18-17` is skipped, done by the pilot.
+
+- job: `roads-2026-10-v1-tiles-202611181112`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/tiles/shards/`
+- status: `gcloud batch jobs describe roads-2026-10-v1-tiles-202611181112 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=roads-2026-10-v1-tiles-202611181112 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-tiles-202611181112 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python roads/batch.py records tiles`
