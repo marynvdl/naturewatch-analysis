@@ -235,3 +235,11 @@ About $0.7–1.4 in all, against $0.30–0.80 in the first estimate: the sprout 
 - tasks: `gcloud batch tasks list --job=roads-2026-10-v1-tiles-202611181112 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-tiles-202611181112 --location=europe-west1 --project=nature-watch-387210`
 - totals: `python roads/batch.py records tiles`
+- result: succeeded, run duration 6,933 s (1 h 56 min), 694 of 694 tasks. 423 shards with tiles: 617,344 tiles, 4,732,271,697 bytes. Shard time summed to 39,020 s (10.8 hours), of which 412 s copying blocks; peak memory 0.56 GB.
+
+**Merge.** Submitted 18 November 2026 at 13:11 UTC: one spot `e2-standard-4`, 60 GB `pd-standard`, one retry.
+
+- job: `roads-2026-10-v1-merge-202611181311`, `europe-west1`
+- output: `gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles`
+- status: `gcloud batch jobs describe roads-2026-10-v1-merge-202611181311 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-merge-202611181311 --location=europe-west1 --project=nature-watch-387210`
