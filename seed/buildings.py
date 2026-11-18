@@ -325,6 +325,8 @@ def command_run(recipe: dict, blocks: list[list[int]], work: Path) -> None:
 
     gdal.UseExceptions()
     gdal.SetConfigOption("CPL_MACHINE_IS_GCE", "YES")
+    # Otherwise the histogram writes a .tif.aux.xml beside each Google block in the bucket.
+    gdal.SetConfigOption("GDAL_PAM_ENABLED", "NO")
     work.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
 
