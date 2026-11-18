@@ -76,6 +76,14 @@ seeds:
 sprout:
   id: buildings-2023-v1
   path: gs://nature-watch-bucket/sprouts/buildings/2023/v1/
+  # One two-band COG per 10 degree block that meets a Google block or a TEMPO mosaic, named as the
+  # Google seed: blocks/<block>.tif, with blocks/<block>.json written after it. No overviews.
+  # buildings-2023.vrt is the global grid over them. A block without a COG reads share 255, source 0.
+  # The STAC files are collection.json and buildings-2023-v1.json. Script: sprout/buildings.py.
+  layout: blocks
+  object: "blocks/{block}.tif"
+  vrt: buildings-2023.vrt
+  compression: {method: deflate, level: 6, predictor: none, blocksize: 512}
   bands:
     share:
       # Fraction of the cell covered by buildings, stored as uint8: share = value / 250.

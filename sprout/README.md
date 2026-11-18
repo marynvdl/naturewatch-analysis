@@ -203,3 +203,68 @@ Second submit, about 08:12 UTC: DEFLATE level 6, 20 tasks in parallel, up to 3 r
   - Cost: under $0.10 at list prices (about 2.4 task hours plus boot on spot `e2-standard-2` and about 2.6 GB of storage at about $0.05 a month).
 - Output: `gs://nature-watch-bucket/sprouts/cropland/2024/v2/cropland-2024.vrt`, `collection.json`, `cropland-2024.json`, and `tiles/` with 223 `.tif` and 223 `.json`.
 - Spot check: the VRT is 1,400,000 × 520,000 pixels, origin −170, 70, pixel 0.00025°, nodata 255, version `v2`, class values `cropland:1,not_cropland:0,nodata:255`. A 2000 × 2000 window in `30N_080E` read through the VRT equals the seed tile remapped by hand. The window was read from a local copy of the VRT and two tiles, because GDAL on this laptop cannot read `/vsigs/` from this account. A read of the VRT over `/vsigs/` is still unchecked and is the first thing Facts and Tiles need.
+
+## buildings 2023
+
+`sprout/buildings.py` merges the two seeds of [`cookbook/recipes/buildings-2023-v1.yaml`](../cookbook/recipes/buildings-2023-v1.yaml) into sprout `buildings-2023-v1`. The seeds are described in [`seed/README.md`](../seed/README.md).
+
+```bash
+python sprout/buildings.py plan                                   # 488 blocks in 24 tasks
+python sprout/buildings.py submit --pilot E000N20,E000N40 [--approved]
+python sprout/buildings.py check --pilot                          # boxes in the pilot blocks
+python sprout/buildings.py submit [--approved]                    # every block
+python sprout/buildings.py records                                # totals from the records written so far
+python sprout/buildings.py collect                                # the VRT and STAC files, after every block has a record
+python sprout/buildings.py check                                  # the comparison boxes, read through the VRT
+python -m pytest sprout buildings cookbook
+```
+
+**Blocks.** 488 blocks of 10°, named as the Google seed (`W010N00` is 10 W to 0, 0 to 10 N): the 145 Google blocks and every block that meets one of the 131 TEMPO mosaics. 343 are TEMPO only. Many of those are mostly sea, because a zoom 4 mosaic is 22.5° wide.
+
+**Per block.** The task works in strips of 1,024 rows. For each strip it reads the Google block if there is one, and warps TEMPO band 1 from the mosaics that meet the block onto the sprout grid with `average` and source nodata −1, as `buildings/compare.py tempo_box` does, with 72 cells more on every side. A TEMPO cell is kept where a TEMPO cell within 72 cells either side, in a square, reaches 0.15. Otherwise it is 0. Google cells are not seeds. A cell takes Google where the Google seed is not 255, otherwise TEMPO, rounded to `share × 250`, otherwise share 255 and source 0. The block is written as a two-band COG (`share`, `source`), DEFLATE level 6, no predictor, 512 px blocks, no overviews, nodata 255, at `blocks/<block>.tif`, then its record `blocks/<block>.json`. A block with no cell from either source writes only the record. A rerun skips a block whose record exists and whose COG has the recorded size. A seed across the antimeridian or beyond 85.05° does not count, because the margin reads nothing there.
+
+**Collect.** `buildings-2023.vrt` is the global grid, 1,440,000 × 720,000 cells. The share band's nodata is 255, so a block without a COG reads 255, and the source band has no nodata, so it reads 0. The STAC files are `collection.json` and `buildings-2023-v1.json`.
+
+**Laptop check before the pilot, 18 November 2026.** TEMPO warped from the stored mosaics, read over HTTPS with the gcloud account's token, against the cached source-tile reads of task 01. Saint-Flour is the same to 7 × 10⁻⁹. Kansas differs in 14 of 60,168 cells, all on row 116, which is a zoom 11 tile seam: `compare.py` warped each source tile on its own, so a seam cell took only one tile's pixels, while the mosaic averages both. The sprout share after the seed rule is 0.6780 km² in Saint-Flour against 0.6779 from `tempo_kept`, and 0.0918 in Kansas against 0.0917.
+
+### Pilot
+
+Two blocks, approved with the task file for under $0.05: `E000N20` (Google's edge near 22.7° N, and the TEMPO noise at in-salah-south) and `E000N40` (TEMPO only, with Saint-Flour). Submitted 18 November 2026 at 13:29 UTC. One spot `e2-standard-2`, 50 GB `pd-standard` disk.
+
+- job: `sprout-buildings-2023-v1-pilot-202611181329`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/sprout/buildings-2023-v1/pilot/`, `<block>.tif` and `<block>.json`
+- status: `gcloud batch jobs describe sprout-buildings-2023-v1-pilot-202611181329 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete sprout-buildings-2023-v1-pilot-202611181329 --location=europe-west1 --project=nature-watch-387210`
+- records: `python sprout/buildings.py records --pilot`
+- result: succeeded, run duration 757 s (13:30:35 to 13:43:13 UTC), first attempt. Batch deleted the machine when the task ended.
+
+| Block | Bytes | Google cells | TEMPO cells | Built cells, Google / TEMPO | TEMPO cells the seed rule set to 0 | Seconds | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `E000N20` | 5,654,694 | 1,577,416,721 | 22,582,980 | 772,834 / 9,245 | 8,049 | 395.5 | 2,310,819,840 |
+| `E000N40` | 157,629,895 | 0 | 1,170,625,384 | 0 / 145,962,137 | 792,534 | 357.0 | 2,666,610,688 |
+
+- Header of `E000N20`: 40,000 × 40,000, origin 0°, 30° N, 0.00025°, EPSG:4326, two Byte bands `share` and `source`, nodata 255, DEFLATE, 512 px blocks, no overviews.
+- `check --pilot`: in-salah-south is all Google (50,576 cells), 0.0001 km², and no TEMPO cell is shown. Its `ee_box.py` mean was not cached in task 01; the box's highest Google presence there was 0.16. Saint-Flour is all TEMPO, 0.6780 km² against 0.6779 from `tempo_kept`.
+- **Google's edge is not near 22.7° N.** Google is the source for 98.6% of `E000N20`, up to 30° N, except a strip east of about 9.6° E. The 2023 tile index has footprints up to 37.9° N between 0° and 10° E, and the COGs read real values there: at 27° N 3° E and 25° N 5.87° E, no pixel is −99 and the highest presence is below 10⁻⁵. The parcel's 22.7° N edge, and task 04's window there, need correcting in the app repo.
+
+### Expected cost of the full run, written 18 November 2026 before it
+
+- **Work:** 488 blocks (145 with a Google seed, 343 TEMPO only) in 24 tasks of 18–23 blocks, 12 at a time (24 `E2_CPUS`). The pilot blocks took 357–396 s each. Every block warps its whole grid, even a mostly sea one, so take 375 s a block: about 51 task-hours, plus about 1 minute of start-up per task.
+- **Wall time:** about 4–5 hours, in two waves of 12 tasks of about 2 hours. The task limit is 8 hours.
+- **Machine:** spot `e2-standard-2`, 7 GB requested, peak 2.7 GB in the pilot. 50 GB `pd-standard` disk.
+- **Compute:** about $1.50–2.00 at $0.03–0.04 an hour. Disk about $0.15. A preempted task resumes from its last finished block.
+- **Stored:** a sparse Google block is a few MB, and a dense TEMPO block like `E000N40` is 158 MB. The Google seed is 5.0 GB over 145 blocks, and perhaps 60–100 TEMPO blocks are dense, so about 10–25 GB, $0.25–0.60 a month at $0.023 per GB.
+- **Transfer:** the seeds and the sprout are all in `nature-watch-bucket` (EU), read from `europe-west1`, so no egress. About 1,000 write operations, under $0.01.
+- About $2.50 at most in all, with storage of $0.25–0.60 a month after it. The pilot objects in the scratch prefix are deleted once the full run is checked.
+
+### Full run
+
+Approved by the user on 18 November 2026 with the expected cost above. Submitted at 14:07 UTC: 24 tasks, 488 blocks, 12 at a time, spot `e2-standard-2`, 50 GB `pd-standard` disk, up to 3 retries a task.
+
+- job: `sprout-buildings-2023-v1-202611181407`, `europe-west1`
+- output: `gs://nature-watch-bucket/sprouts/buildings/2023/v1/blocks/`, `<block>.tif` and `<block>.json`
+- status: `gcloud batch jobs describe sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
+- totals so far: `python sprout/buildings.py records`
+- after it finishes: `python sprout/buildings.py collect`, then `python sprout/buildings.py check`
