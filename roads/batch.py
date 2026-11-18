@@ -50,10 +50,10 @@ SHAPES = {
         "max_retries": 3,
     },
     "sprout": {
-        "machine": "e2-standard-2",
+        "machine": "e2-highmem-2",  # 16 GB: the densest block, 40N_000E, reads 62 million rows with its neighbours
         "cpu_milli": "2000",
-        "memory_mib": "7168",
-        "duckdb_memory": "3GB",
+        "memory_mib": "14336",
+        "duckdb_memory": "6GB",
         "disk_gb": 100,
         "max_run_seconds": 6 * 3600,
         "max_retries": 3,

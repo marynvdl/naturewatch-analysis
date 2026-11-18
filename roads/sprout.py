@@ -145,7 +145,10 @@ def write_burn_source(con, seed_paths: list[str], bounds, recipe: dict, dest: Pa
     con.execute(
         f"COPY ({query}) TO '{dest}' (FORMAT GDAL, DRIVER 'FlatGeobuf', LAYER_CREATION_OPTIONS 'SPATIAL_INDEX=NO')"
     )
-    return int(con.execute(f"SELECT count(*) FROM ({query})").fetchone()[0])
+    vector = gdal.OpenEx(str(dest), gdal.OF_VECTOR)
+    count = vector.GetLayer(0).GetFeatureCount()
+    vector = None
+    return int(count)
 
 
 def burn_source(source: Path, bounds, recipe: dict, all_touched: bool = True):
