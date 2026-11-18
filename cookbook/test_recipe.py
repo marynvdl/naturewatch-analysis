@@ -34,6 +34,7 @@ def test_the_catalog_lists_the_cropland_and_places_recipes():
         "cropland-2024.yaml",
         "places-protected-areas.yaml",
         "places-recognitions.yaml",
+        "roads-2026-10-v1.yaml",
     ]
     recipe = dict(loaded)["cropland-2024.yaml"]
     assert recipe["id"] == "cropland-2024"
@@ -193,3 +194,25 @@ def test_the_buildings_recipe_names_both_sources_and_the_merge():
     assert recipe["sources"]["google"]["tile_count"] == 627480
     assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles"
     assert "max_zoom" not in recipe["tiles"]
+
+
+def test_the_roads_recipe_names_the_release_levels_and_tiles():
+    recipe = dict(load_recipes())["roads-2026-10-v1.yaml"]
+    assert recipe["id"] == recipe["sprout"]["id"] == "roads-2026-10-v1"
+    assert recipe["source"]["release"] == "2026-10-21.0"
+    assert recipe["source"]["licence"] == "ODbL-1.0"
+    assert recipe["grid"] == {"crs": "EPSG:4326", "pixel_size_deg": 0.00025, "origin": [-180, 90], "dtype": "uint8"}
+    levels = recipe["roads"]["levels"]
+    assert {name: level["value"] for name, level in levels.items()} == {"major": 4, "main": 3, "minor": 2, "track": 1}
+    classes = [c for level in levels.values() for c in level["classes"]] + recipe["roads"]["by_surface"]["classes"]
+    assert len(classes) == len(set(classes))
+    assert not {"footway", "path", "steps", "cycleway", "bridleway", "pedestrian"} & set(classes)
+    assert recipe["roads"]["by_surface"] == {"classes": ["unclassified", "unknown"], "paved": "minor", "otherwise": "track"}
+    assert recipe["seed"]["path"] == "gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/"
+    assert recipe["sprout"]["path"] == "gs://nature-watch-bucket/sprouts/roads/2026-10/v1/"
+    assert recipe["sprout"]["burn"] == "all_touched"
+    assert list(recipe["sprout"]["bands"]) == ["level", "surface"]
+    tiles = recipe["tiles"]
+    assert tiles["path"] == "gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles"
+    assert (tiles["tile_size"], tiles["min_zoom"], tiles["max_zoom"]) == (512, 0, 11)
+    assert (tiles["share_steps"], tiles["share_full"]) == (8, 0.25)

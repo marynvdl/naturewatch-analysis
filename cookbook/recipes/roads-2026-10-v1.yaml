@@ -1,0 +1,62 @@
+# Hand-edited catalog for the Roads layer (task 01 of the Roads parcel in naturewatch-app).
+# One snapshot of Overture's roads: a seed, a sprout on the stats grid, and raster PMTiles from the sprout.
+# The measurements behind the levels, the burn rule, the top zoom and the shades are in roads/README.md.
+# Approved by the user on 17 November 2026.
+id: roads-2026-10-v1
+title: Overture roads, release 2026-10-21.0
+source:
+  name: Overture Maps transportation
+  url: https://docs.overturemaps.org/guides/transportation/
+  release: 2026-10-21.0
+  path: s3://overturemaps-us-west-2/release/2026-10-21.0/theme=transportation/type=segment/*.parquet
+  s3_region: us-west-2
+  licence: ODbL-1.0
+  attribution: © OpenStreetMap contributors, Overture Maps Foundation
+period: {start: 2026-10-21, end: 2026-10-21}
+extent: global
+grid:
+  crs: EPSG:4326
+  pixel_size_deg: 0.00025
+  origin: [-180, 90]
+  dtype: uint8
+roads:
+  subtype: road
+  # A segment's surface is the value that covers most of its length. Paved wins a tie, then unpaved.
+  surface:
+    paved: [paved, paving_stones, metal]
+    unpaved: [unpaved, gravel, dirt]
+  levels:
+    major: {value: 4, classes: [motorway, trunk]}
+    main: {value: 3, classes: [primary, secondary, tertiary]}
+    minor: {value: 2, classes: [residential, living_street, service]}
+    track: {value: 1, classes: [track]}
+  # These classes say nothing about the road. Paved ones are minor, the rest are tracks.
+  # unknown was minor in the parcel's first proposal; the imagery check made it follow unclassified.
+  by_surface: {classes: [unclassified, unknown], paved: minor, otherwise: track}
+seed:
+  id: seed-roads-overture-2026-10-21
+  path: gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/
+  # GeoParquet split by 10° block. Kept after the sprout and tiles: Overture does not keep every release.
+  format: geoparquet
+  columns: [id, class, subclass, surface, level, osm_ids, name, bbox, geometry]
+sprout:
+  id: roads-2026-10-v1
+  path: gs://nature-watch-bucket/sprouts/roads/2026-10/v1/
+  # One COG per 10° block, a VRT over them and static STAC files. A block without a road is not written and reads 0.
+  burn: all_touched
+  nodata: none
+  compression: {method: deflate, level: 6, predictor: none, blocksize: 512}
+  bands:
+    level: {0: none, 1: track, 2: minor, 3: main, 4: major}
+    surface: {0: unknown, 1: paved, 2: unpaved}
+tiles:
+  path: gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles
+  scheme: pmtiles
+  tile_size: 512
+  min_zoom: 0
+  max_zoom: 11
+  # Palette PNG, red carries the value, index 0 is transparent. A tile with no road is not stored.
+  # Below max_zoom: shade k of share_steps, red = round((k / share_steps)² × 255), k = max(1, round(√(share / share_full) × share_steps)).
+  # At max_zoom: red = level × 4 + surface of the highest road under the pixel.
+  share_steps: 8
+  share_full: 0.25
