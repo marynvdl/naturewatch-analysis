@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The global roads seed and sprout as Batch jobs in europe-west1.
+"""The global roads seed, sprout and tiles as Batch jobs in europe-west1.
 
 The 648 blocks of 10° are split into at most 20 runs of similar weight, one Batch task each.
 Each block writes its output, then a JSON record, so a rerun skips finished blocks.
@@ -10,6 +10,9 @@ Each block writes its output, then a JSON record, so a rerun skips finished bloc
   python roads/batch.py submit sprout --approved                every block, after every seed block has a record
   python roads/batch.py collect                                 the VRT and STAC files, after every sprout block has a record
   python roads/batch.py records seed                            totals from the records written so far
+  python roads/batch.py submit tiles --pilot 5-18-17 [--approved] one shard of the tiles
+  python roads/batch.py submit tiles --approved                 every shard, one task each
+  python roads/batch.py submit merge --approved                 after every shard has a record: merge, verify, publish
 
 A seed pilot writes to the seed path, as the full run would. A sprout pilot writes to the
 scratch prefix, because its neighbours' seed blocks may not exist yet.
@@ -17,6 +20,7 @@ scratch prefix, because its neighbours' seed blocks may not exist yet.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -29,16 +33,33 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(ROOT / "sprout"))
+
+
+def _load_sprout_helpers():
+    """sprout/cropland.py: GCS helpers, project, region, image. Loaded under its own name, so that
+    tiles/cropland.py, which roads/tiles.py imports as cropland, does not shadow it."""
+    spec = importlib.util.spec_from_file_location("sprout_cropland", ROOT / "sprout" / "cropland.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["sprout_cropland"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+gcs = _load_sprout_helpers()
 
 import blocks  # noqa: E402
-import cropland as gcs  # noqa: E402  sprout/cropland.py: GCS helpers, project, region, image
 import seed as seedmod  # noqa: E402
 
 TASKS = 20  # the project allows 24 VMs at once in europe-west1
 DUCKDB_VERSION = "2.0.0"
 CONTAINER_PYTHON = "312"  # ghcr.io/osgeo/gdal:ubuntu-small-3.11.4 is Ubuntu 24.04
 CODE_FILES = ("roads/batch.py", "roads/blocks.py", "roads/seed.py", "roads/sprout.py", "sprout/cropland.py")
+TILE_CODE_FILES = (
+    "roads/blocks.py", "roads/seed.py", "roads/sprout.py", "roads/tiles.py",
+    "tiles/cropland.py", "tiles/global_cropland.py", "tiles/pyramid.py", "tiles/transcode.py",
+)
+PMTILES_VERSION = "3.8.1"
+TILE_PARALLELISM = 12  # 24 E2 CPUs in the region, 2 a machine
 SHAPES = {
     "seed": {
         "machine": "e2-standard-4",
@@ -58,6 +79,24 @@ SHAPES = {
         "disk_type": "pd-standard",  # pd-balanced counts against the region's 500 GB SSD quota
         "max_run_seconds": 6 * 3600,
         "max_retries": 3,
+    },
+    "tiles": {  # one shard a task: a few block COGs and one root-to-leaf path of 512 px tiles in memory
+        "machine": "e2-standard-2",
+        "cpu_milli": "2000",
+        "memory_mib": "6144",
+        "disk_gb": 30,
+        "disk_type": "pd-standard",
+        "max_run_seconds": 2 * 3600,
+        "max_retries": 3,
+    },
+    "merge": {  # every shard on disk, the archive and the writer's spool, then the sample rebuilds from the sprout
+        "machine": "e2-standard-4",
+        "cpu_milli": "4000",
+        "memory_mib": "14336",
+        "disk_gb": 60,
+        "disk_type": "pd-standard",
+        "max_run_seconds": 6 * 3600,
+        "max_retries": 1,
     },
 }
 
@@ -363,7 +402,7 @@ def stac_documents(recipe: dict, records: list[dict]) -> tuple[dict, dict]:
     return collection, item
 
 
-def fetch_records(prefix: str, dest: Path) -> dict[str, dict]:
+def fetch_records(prefix: str, dest: Path, key: str = "block") -> dict[str, dict]:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -375,8 +414,8 @@ def fetch_records(prefix: str, dest: Path) -> dict[str, dict]:
     out = {}
     for path in sorted(dest.glob("*.json")):
         record = json.loads(path.read_text())
-        if "block" in record:
-            out[record["block"]] = record
+        if key in record:
+            out[record[key]] = record
     return out
 
 
@@ -402,7 +441,10 @@ def command_collect(recipe: dict) -> None:
 def totals(records) -> dict:
     records = list(records)
     out = {"blocks": len(records), "with_data": sum(1 for r in records if r.get("bytes"))}
-    for key in ("rows", "features", "road_cells", "level_1", "level_2", "level_3", "level_4", "paved", "unpaved", "bytes", "seconds"):
+    for key in (
+        "rows", "features", "road_cells", "level_1", "level_2", "level_3", "level_4", "paved", "unpaved", "tiles", "bytes",
+        "seconds", "wall_seconds", "fetch_seconds",
+    ):
         if any(key in r for r in records):
             out[key] = round(sum(r.get(key, 0) for r in records), 1)
     out["peak_memory_bytes_max"] = max((r.get("peak_memory_bytes", 0) for r in records), default=0)
@@ -412,7 +454,27 @@ def totals(records) -> dict:
 # ---- submit --------------------------------------------------------------------------
 
 
+def tile_plan(recipe: dict, pilot: str | None) -> dict:
+    """Shards over the sprout blocks that have a COG. A pilot plan holds one shard; it writes where the full run would."""
+    import tiles as roadtiles
+
+    records = fetch_records(gcs.gs_join(recipe["sprout"]["path"], "blocks/"), ROOT / "data" / "roads" / "collect" / "sprout-records")
+    missing = [b for b in blocks.all_blocks() if b not in records]
+    if missing:
+        raise SystemExit(f"{len(missing)} sprout blocks have no record, for example {missing[0]}")
+    shards = roadtiles.shard_plan(sorted(b for b, r in records.items() if r["bytes"]))
+    if pilot:
+        shards = [s for s in shards if s["id"] == pilot]
+        if not shards:
+            raise SystemExit(f"no shard {pilot}")
+    return {"kind": "tiles", "shards": shards, "pilot": bool(pilot)}
+
+
 def make_plan(recipe: dict, kind: str, pilot: str | None) -> dict:
+    if kind in ("tiles", "merge"):
+        if kind == "merge" and pilot:
+            raise SystemExit("the merge has no pilot")
+        return tile_plan(recipe, pilot)
     if pilot:
         blocks.corner(pilot)
         return {"kind": kind, "groups": [[pilot]], "pilot": True}
@@ -430,9 +492,9 @@ def make_plan(recipe: dict, kind: str, pilot: str | None) -> dict:
     return {"kind": kind, "groups": blocks.groups(weights, TASKS, minimum), "pilot": False}
 
 
-def bootstrap(prefix: str, wheel: str) -> str:
+def bootstrap(prefix: str, wheel: str, code_files=CODE_FILES, plan_name: str = "plan.json") -> str:
     bucket_path = prefix.removeprefix("gs://").rstrip("/")
-    names = [*CODE_FILES, "recipe.json", "plan.json", wheel]
+    names = [*code_files, "recipe.json", plan_name, wheel]
     downloads = "\n".join(f'download("{n}", folder / "{n}")' for n in names)
     return f"""python3 - << 'PY'
 import json
@@ -459,12 +521,22 @@ export PYTHONPATH=/tmp/in/lib
 """
 
 
-def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool) -> dict:
+def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool, plan_name: str = "plan.json") -> dict:
     shape = SHAPES[kind]
-    command = (
-        f"python3 /tmp/in/roads/batch.py run-{kind} --recipe /tmp/in/recipe.json --plan /tmp/in/plan.json --work /tmp/work"
-        + (" --pilot-run" if pilot else "")
-    )
+    if kind == "tiles":
+        command = f"python3 /tmp/in/roads/tiles.py shard --recipe /tmp/in/recipe.json --plan /tmp/in/{plan_name} --work /tmp/work"
+    elif kind == "merge":
+        command = (
+            f"python3 /tmp/in/roads/tiles.py merge --recipe /tmp/in/recipe.json --plan /tmp/in/{plan_name} --work /tmp/work"
+            " --verify-samples 16"
+        )
+    else:
+        command = (
+            f"python3 /tmp/in/roads/batch.py run-{kind} --recipe /tmp/in/recipe.json --plan /tmp/in/{plan_name} --work /tmp/work"
+            + (" --pilot-run" if pilot else "")
+        )
+    code_files = TILE_CODE_FILES if kind in ("tiles", "merge") else CODE_FILES
+    parallelism = TILE_PARALLELISM if kind == "tiles" else TASKS
     spec = {
         "maxRunDuration": f"{shape['max_run_seconds']}s",
         "maxRetryCount": shape["max_retries"],
@@ -472,11 +544,11 @@ def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool) -> di
         "computeResource": {"cpuMilli": shape["cpu_milli"], "memoryMib": shape["memory_mib"]},
         "environment": {"variables": {"CPL_MACHINE_IS_GCE": "YES", gcs.BATCH_ENV: "1", "GDAL_CACHEMAX": "256"}},
         "runnables": [
-            {"container": {"imageUri": gcs.IMAGE, "entrypoint": "sh", "commands": ["-c", bootstrap(prefix, wheel) + command + "\n"]}}
+            {"container": {"imageUri": gcs.IMAGE, "entrypoint": "sh", "commands": ["-c", bootstrap(prefix, wheel, code_files, plan_name) + command + "\n"]}}
         ],
     }
     return {
-        "taskGroups": [{"taskCount": str(tasks), "parallelism": str(min(tasks, TASKS)), "taskSpec": spec}],
+        "taskGroups": [{"taskCount": str(tasks), "parallelism": str(min(tasks, parallelism)), "taskSpec": spec}],
         "allocationPolicy": {
             "instances": [
                 {
@@ -509,6 +581,16 @@ def duckdb_wheel(work: Path) -> Path:
     return found[0]
 
 
+def pmtiles_wheel(work: Path) -> Path:
+    found = list(work.glob(f"pmtiles-{PMTILES_VERSION}-*.whl"))
+    if not found:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "download", f"pmtiles=={PMTILES_VERSION}", "--no-deps", "-d", str(work)], check=True
+        )
+        found = list(work.glob(f"pmtiles-{PMTILES_VERSION}-*.whl"))
+    return found[0]
+
+
 def job_name(recipe: dict, kind: str, pilot: str | None) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
     label = f"-pilot-{pilot.lower().replace('_', '-')}" if pilot else ""
@@ -520,31 +602,41 @@ def command_submit(recipe_path: Path, kind: str, pilot: str | None, approved: bo
     plan = make_plan(recipe, kind, pilot)
     work = ROOT / "data" / "roads" / "batch"
     work.mkdir(parents=True, exist_ok=True)
-    wheel = duckdb_wheel(work)
+    tiled = kind in ("tiles", "merge")
+    wheel = pmtiles_wheel(work) if tiled else duckdb_wheel(work)
     prefix = scratch(recipe)
     name = job_name(recipe, kind, pilot)
-    config = batch_job(prefix, kind, len(plan["groups"]), wheel.name, bool(pilot))
+    plan_name = f"{name}.plan.json" if tiled else "plan.json"
+    tasks = 1 if kind == "merge" else len(plan["shards"]) if tiled else len(plan["groups"])
+    config = batch_job(prefix, kind, tasks, wheel.name, bool(pilot), plan_name)
     (work / "recipe.json").write_text(json.dumps(recipe, default=str) + "\n")
-    (work / "plan.json").write_text(json.dumps(plan) + "\n")
+    (work / plan_name).write_text(json.dumps(plan) + "\n")
     config_path = work / f"{name}.json"
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     shape = SHAPES[kind]
-    sizes = [len(g) for g in plan["groups"]]
-    print(f"job {name}: {len(sizes)} task(s), {sum(sizes)} blocks, {min(sizes)}–{max(sizes)} a task, spot {shape['machine']}")
+    if tiled:
+        print(f"job {name}: {tasks} task(s), {len(plan['shards'])} shards, spot {shape['machine']}, parallelism {config['taskGroups'][0]['parallelism']}")
+    else:
+        sizes = [len(g) for g in plan["groups"]]
+        print(f"job {name}: {len(sizes)} task(s), {sum(sizes)} blocks, {min(sizes)}–{max(sizes)} a task, spot {shape['machine']}")
     print(f"config {config_path}")
     print(f"status: gcloud batch jobs describe {name} --location={gcs.REGION} --project={gcs.PROJECT}")
     print(f"tasks:  gcloud batch tasks list --job={name} --location={gcs.REGION} --project={gcs.PROJECT}")
     print(f"cancel: gcloud batch jobs delete {name} --location={gcs.REGION} --project={gcs.PROJECT}")
     if kind == "seed":
         print(f"output: {recipe['seed']['path']}")
+    elif kind == "tiles":
+        print(f"output: {gcs.gs_join(scratch(recipe), 'tiles/shards/')}")
+    elif kind == "merge":
+        print(f"output: {recipe['tiles']['path']}")
     else:
         print(f"output: {gcs.gs_join(scratch(recipe), 'pilot/') if pilot else gcs.gs_join(recipe['sprout']['path'], 'blocks/')}")
     if not approved:
         print("not submitted: pass --approved once the cost is approved")
         return
-    for relative in CODE_FILES:
+    for relative in TILE_CODE_FILES if tiled else CODE_FILES:
         gcs.upload_with_gcloud(ROOT / relative, prefix + "code/" + relative)
-    for path in (work / "recipe.json", work / "plan.json", wheel):
+    for path in (work / "recipe.json", work / plan_name, wheel):
         gcs.upload_with_gcloud(path, prefix + "code/" + path.name)
     gcs.gcloud(["services", "enable", "batch.googleapis.com"])
     gcs.gcloud(["batch", "jobs", "submit", name, f"--location={gcs.REGION}", f"--config={config_path}"])
@@ -554,18 +646,18 @@ def command_submit(recipe_path: Path, kind: str, pilot: str | None, approved: bo
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("submit", "run-seed", "run-sprout", "collect", "records"))
-    parser.add_argument("kind", nargs="?", choices=("seed", "sprout"))
+    parser.add_argument("kind", nargs="?", choices=("seed", "sprout", "tiles", "merge"))
     parser.add_argument("--recipe", type=Path, default=seedmod.DEFAULT_RECIPE)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--work", type=Path, default=Path("/tmp/work"))
-    parser.add_argument("--pilot", help="one block, for example 30S_020E")
+    parser.add_argument("--pilot", help="one block, for example 30S_020E, or one tiles shard, for example 5-18-17")
     parser.add_argument("--pilot-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--approved", action="store_true")
     args = parser.parse_args()
     recipe = seedmod.load_recipe(args.recipe)
     if args.command == "submit":
         if not args.kind:
-            parser.error("submit needs seed or sprout")
+            parser.error("submit needs seed, sprout, tiles or merge")
         command_submit(args.recipe, args.kind, args.pilot, args.approved)
     elif args.command == "run-seed":
         run_seed(recipe, json.loads(args.plan.read_text()), args.work)
@@ -574,8 +666,11 @@ def main() -> None:
     elif args.command == "collect":
         command_collect(recipe)
     else:
-        prefix = recipe["seed"]["path"] if args.kind == "seed" else gcs.gs_join(recipe["sprout"]["path"], "blocks/")
-        records = fetch_records(prefix, ROOT / "data" / "roads" / "collect" / f"{args.kind}-records")
+        if args.kind == "tiles":
+            prefix, key = gcs.gs_join(scratch(recipe), "tiles/shards/"), "shard"
+        else:
+            prefix, key = (recipe["seed"]["path"] if args.kind == "seed" else gcs.gs_join(recipe["sprout"]["path"], "blocks/")), "block"
+        records = fetch_records(prefix, ROOT / "data" / "roads" / "collect" / f"{args.kind}-records", key)
         print(json.dumps(totals(records.values())))
 
 

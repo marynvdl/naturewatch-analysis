@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tiles"))
 
+import cropland  # noqa: E402
 import pyramid  # noqa: E402
 import seed as seedmod  # noqa: E402
 import transcode  # noqa: E402
@@ -63,8 +64,23 @@ def imagery(bbox, zoom: int) -> Image.Image:
     return canvas.crop((int(left), int(top), int(left + x1 - x0), int(top + y1 - y0)))
 
 
-def archive_tiles(path: Path, zoom: int) -> dict[tuple[int, int], bytes]:
-    return {(x, y): data for (z, x, y), data in pyramid.read_archive(path) if z == zoom}
+def archive_tiles(path, zoom: int, bbox) -> dict[tuple[int, int], bytes]:
+    """Tiles at one zoom. An https URL is read by Range requests, only the tiles in bbox."""
+    if not str(path).startswith("https://"):
+        return {(x, y): data for (z, x, y), data in pyramid.read_archive(Path(path)) if z == zoom}
+    from pmtiles.reader import Reader
+
+    def get(offset: int, length: int) -> bytes:
+        request = urllib.request.Request(str(path), headers={"Range": f"bytes={offset}-{offset + length - 1}"})
+        return urllib.request.urlopen(request, timeout=60).read()
+
+    reader = Reader(get)
+    out = {}
+    for x, y in cropland.tiles_covering(tuple(bbox), zoom):
+        data = reader.get(zoom, x, y)
+        if data is not None:
+            out[(x, y)] = data
+    return out
 
 
 def colour_tile(red: np.ndarray, top: bool) -> np.ndarray:
@@ -89,7 +105,7 @@ def render_tiles(path: Path, zoom: int, bbox, top: bool, use_imagery: bool, scal
     x1, y1 = world_px(east, south, zoom, 512)
     width, height = int(round(x1 - x0)), int(round(y1 - y0))
     overlay = np.zeros((height, width, 4), dtype=np.uint8)
-    for (tx, ty), data in archive_tiles(path, zoom).items():
+    for (tx, ty), data in archive_tiles(path, zoom, bbox).items():
         rgba = transcode.decode_rgba(data)
         red = np.where(rgba[..., 3] == 0, 0, rgba[..., 0]).astype(np.int32)
         coloured = colour_tile(red, top)
@@ -150,9 +166,9 @@ def main() -> None:
     out_dir = seedmod.DATA / "renders"
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.command == "tiles":
-        path = Path(args.source)
+        path = args.source if args.source.startswith("https://") else Path(args.source)
         image = render_tiles(path, args.zoom, args.bbox, args.top, not args.no_imagery, args.scale)
-        out = args.out or out_dir / f"{path.stem}-at-z{args.zoom}.png"
+        out = args.out or out_dir / f"{Path(str(path)).stem}-at-z{args.zoom}.png"
     else:
         bbox = args.bbox or seedmod.box_bounds(seedmod.load_boxes()[args.source])
         image = render_lines(args.source, args.zoom, bbox, args.only_class)
