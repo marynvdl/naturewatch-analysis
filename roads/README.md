@@ -2,7 +2,7 @@
 
 Scripts for the Roads layer: a seed read from Overture's transportation theme, a sprout on the stats grid, and raster PMTiles from that sprout. The recipe is [`cookbook/recipes/roads-2026-10-v1.yaml`](../cookbook/recipes/roads-2026-10-v1.yaml). The parcel is `docs/parcels/roads.md` in naturewatch-app.
 
-Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout were written on 18 November 2026 by Batch jobs from `roads/batch.py` (task 02). The tiles are task 03.
+Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout were written on 18 November 2026 by Batch jobs from `roads/batch.py` (task 02), and the tiles the same day (task 03).
 
 ## Run
 
@@ -17,6 +17,8 @@ python roads/tiles.py window chinko --top-zoom 11 # data/roads/tiles/chinko-z11.
 python roads/render.py tiles data/roads/tiles/chinko-z11.pmtiles --zoom 8 --bbox 23 5.5 25 7.5
 python roads/render.py lines waterberg --zoom 13 [--class unknown]
 MAPBOX_ACCESS_TOKEN=pk... python roads/preview.py   # http://127.0.0.1:8765/preview.html: the sample archives on a Mapbox map
+MAPBOX_ACCESS_TOKEN=pk... python roads/preview.py --remote https://storage.googleapis.com/nature-watch-tiles/roads/2026-10/v1/roads.pmtiles
+python roads/render.py tiles https://storage.googleapis.com/nature-watch-tiles/roads/2026-10/v1/roads.pmtiles --zoom 8 --bbox 27 -26.5 29 -24.5
 python -m pytest roads
 ```
 
@@ -243,3 +245,24 @@ About $0.7–1.4 in all, against $0.30–0.80 in the first estimate: the sprout 
 - output: `gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles`
 - status: `gcloud batch jobs describe roads-2026-10-v1-merge-202611181311 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-merge-202611181311 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 578 s, peak memory 3.0 GB. 154.6 s fetching the shards, 74.2 s writing the archive, the rest the sample rebuilds and the upload. The shards were deleted after the upload.
+
+### Published archive
+
+`gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles`
+
+| | Result |
+| --- | --- |
+| Tiles | 617,574 (617,344 in 423 shards, 230 at zooms 0–4); 617,496 distinct bodies |
+| By zoom, 5 to 11 | 423; 1,220; 3,670; 11,661; 38,189; 128,571; 433,610 |
+| Bytes | 4,734,899,752 (4.41 GiB), 1.18 a road cell |
+| Bounds | −180 to 180, ±85.0511°; zooms 0–11 |
+| Metadata | version `roads-2026-10-v1`, release `2026-10-21.0`, attribution © OpenStreetMap contributors, Overture Maps Foundation, licence ODbL-1.0, the shades and the level and surface values |
+| Sprout check | 16 zoom 8 subtrees rebuilt from the published VRT, 729 tiles, byte for byte the same (roots in the merge log) |
+| Cache-Control | `public, max-age=31536000, immutable` |
+| Range request | 206, `Content-Range: bytes 0-126/4734899752` |
+| CORS | GET with Range from `http://localhost:5173` returns `Access-Control-Allow-Origin`; a preflight from `https://naturewatch.space` answers 200 |
+| Looked at | `render.py tiles <public URL>` over Esri imagery: the world at zoom 1, Africa at zoom 4, gauteng-waterberg and chinko at zoom 8, the shard corner at 22.5°E 21.94°S at zoom 8 (no seam; the straight north–south line at 22.7975°E is a mapped track in the sprout), Nairobi at zoom 11 by level |
+| Virtual machines left running | none |
+
+**Cost.** The shard tasks ran 16.6 task-hours with start-up (10.8 hours in the shards), 8 of them a second time after a spot preemption, on at most 12 spot `e2-standard-2` for 1 h 56 min, so 17–23 machine-hours at about $0.035: about $0.60–0.80, plus about $0.03 of standard disk. The pilot and the merge add about $0.02. About $0.65–0.85 in all, inside the approved $0.7–1.4. Storage is about $0.11 a month at $0.023 per GB. Reading the sprout inside the region cost nothing.

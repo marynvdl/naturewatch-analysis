@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Look at the roads sample archives on a Mapbox map, painted the way the app would paint them.
 
-  MAPBOX_ACCESS_TOKEN=... python roads/preview.py [--port 8765]
+  MAPBOX_ACCESS_TOKEN=... python roads/preview.py [--port 8765] [--remote URL]
   open http://127.0.0.1:8765/preview.html
 
 Serves roads/preview.html and every data/roads/tiles/*.pmtiles with HTTP Range, on 127.0.0.1 only.
@@ -25,8 +25,11 @@ import seed as seedmod  # noqa: E402
 TILES = seedmod.DATA / "tiles"
 
 
+REMOTE: list[str] = []  # public archives, such as the published one, listed first
+
+
 def config() -> dict:
-    archives = sorted(path.name for path in TILES.glob("*.pmtiles"))
+    archives = REMOTE + sorted(path.name for path in TILES.glob("*.pmtiles"))
     windows = {name: box["bounds"] for name, box in seedmod.load_boxes().items() if box["kind"] == "window"}
     return {"token": os.environ.get("MAPBOX_ACCESS_TOKEN", ""), "archives": archives, "windows": windows}
 
@@ -59,10 +62,12 @@ class Handler(cropland.ByteRangeHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--remote", action="append", default=[], help="a public archive URL to list as well")
     args = parser.parse_args()
+    REMOTE.extend(args.remote)
     if not os.environ.get("MAPBOX_ACCESS_TOKEN"):
         raise SystemExit("set MAPBOX_ACCESS_TOKEN (a public pk. token, such as the app's) and run again")
-    if not list(TILES.glob("*.pmtiles")):
+    if not REMOTE and not list(TILES.glob("*.pmtiles")):
         raise SystemExit(f"no archive in {TILES}. Run roads/tiles.py window <name> first.")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"preview http://127.0.0.1:{args.port}/preview.html", flush=True)
