@@ -157,3 +157,13 @@ Reading Overture costs nothing, and reading the seed inside `europe-west1` is fr
 - tasks: `gcloud batch tasks list --job=roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
 - totals: `python roads/batch.py records seed`
+- result: succeeded, run duration 1,478 s (24.6 minutes), 20 of 20 tasks, no failed retry. 648 records, 363 blocks with rows: 307,681,940 rows, 41,171,304,479 bytes. Block time summed to 8,020 s (2.2 hours). The densest block, `40N_000E`, has 13,662,495 rows (2.11 GB) and took 350 s, at a peak of 12.2 GB.
+
+**Sprout, all blocks.** Submitted 18 November 2026 at 07:04 UTC: 20 tasks, 648 blocks, spot `e2-highmem-2` (16 GB), 100 GB disk, up to 3 retries a task. The machine is larger than the pilot's `e2-standard-2`: `40N_000E` and its neighbours hold 61,884,677 rows, 31 times the pilot. That adds about $0.10 at most, and the whole run stays under the approved $1.0.
+
+- job: `roads-2026-10-v1-sprout-202611180704`, `europe-west1`
+- output: `gs://nature-watch-bucket/sprouts/roads/2026-10/v1/blocks/`, `<block>.tif` and `<block>.json`
+- status: `gcloud batch jobs describe roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180704 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python roads/batch.py records sprout`
