@@ -130,3 +130,21 @@ A record is written after its object, so a block with a record is done, and a re
 - output: `gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/30S_020E.parquet` and `30S_020E.json`; the full run skips this block
 - status: `gcloud batch jobs describe roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-pilot-30s-020e-202611171753 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 57 s. `30S_020E`: 1,995,149 rows, 253,013,161 bytes (127 a row), 44.2 s for the block, peak memory 4.4 GB. Its rows that meet the gauteng-waterberg window are the 715,036 rows of task 01, the same ids.
+
+**Sprout pilot, block `30S_020E`.** Submitted 17 November 2026 at 18:05 UTC. One spot `e2-standard-2`, 100 GB disk. Only this block's seed existed, so roads from its neighbours are missing near its edges (`seed_missing` in the record).
+
+- job: `roads-2026-10-v1-sprout-pilot-30s-020e-202611171804`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/30S_020E.tif` and `.json`, removed at the end of the task
+- result: succeeded, run duration 92 s. 1,995,149 features, 1.6 billion cells, 26,306,817 road cells (track 10,881,011; minor 9,653,522; main 5,210,866; major 561,418), 29,245,015 bytes (1.11 a road cell), 84.0 s for the block of which 4.4 s copying the seed, peak memory 3.6 GB.
+
+**Window check.** The gauteng-waterberg window cut from the pilot COG against the task 01 window sprout: 98 of 64,000,000 cells differ, and the window has 27 fewer road cells (4,744,115 against 4,744,142). Each of the 87 cells that is a road cell in one and not the other has a road cell beside it in both; 2 road cells change level and 9 change only surface. These are lines that pass within rounding error of a cell corner, where `ALL_TOUCHED` gives a different answer for a different raster extent or machine: burning the same window rows on the laptop onto the whole block's raster still differs from the pilot in 67 cells. Every Batch task burns a whole block on the same image, so the global sprout is consistent with itself.
+
+**Revised cost, from the pilots.** For approval before the full jobs.
+
+| Job | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Seed | 648 blocks in 20 tasks; 291 million rows at 44 s per 2 million, plus about 1 s for each empty block and a few minutes of start-up per task | spot `e2-standard-4`, 2–5 task-hours, about 15–30 minutes of wall time | about $0.15–0.40 | about 37 GB | about $0.85 |
+| Sprout | 648 blocks in 20 tasks; about 300 have roads, at 60–180 s each with the neighbour copies; the rest write only a record | spot `e2-standard-2`, 5–15 task-hours, about 20–45 minutes of wall time | about $0.15–0.60 | 2–3.5 GB (1.1 bytes a road cell, 1.8–3.1 billion road cells) | about $0.05–0.08 |
+
+Reading Overture costs nothing, and reading the seed inside `europe-west1` is free. Both pilots together used about 2.5 machine-minutes, under $0.01.
