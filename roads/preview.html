@@ -98,7 +98,7 @@ function addRoads() {
   if (map.getSource('roads')) map.removeSource('roads');
   const name = archiveSel.value;
   const top = topZoom(name);
-  map.addSource('roads', { type: 'raster', url: name.startsWith('https://') ? name : `${location.origin}/tiles/${name}`, tileSize: 512, maxzoom: top });
+  map.addSource('roads', { type: 'raster', url: name.startsWith('https://') ? `${location.origin}/remote/${C.archives.indexOf(name)}/${name.split('/').pop()}` : `${location.origin}/tiles/${name}`, tileSize: 512, maxzoom: top });
   const satellite = basemapSel.value === 'satellite';
   map.addLayer({ id: 'roads-share', type: 'raster', source: 'roads', maxzoom: top, paint: sharePaint(satellite ? SHARE_SAT : SHARE) });
   map.addLayer({ id: 'roads-level', type: 'raster', source: 'roads', minzoom: top, paint: levelPaint() });
