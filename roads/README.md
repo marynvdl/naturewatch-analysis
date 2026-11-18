@@ -262,7 +262,7 @@ About $0.7–1.4 in all, against $0.30–0.80 in the first estimate: the sprout 
 | Cache-Control | `public, max-age=31536000, immutable` |
 | Range request | 206, `Content-Range: bytes 0-126/4734899752` |
 | CORS | GET with Range from `http://localhost:5173` returns `Access-Control-Allow-Origin`; a preflight from `https://naturewatch.space` answers 200 |
-| Looked at | `render.py tiles <public URL>` over Esri imagery: the world at zoom 1, Africa at zoom 4, gauteng-waterberg and chinko at zoom 8, the shard corner at 22.5°E 21.94°S at zoom 8 (no seam; the straight north–south line at 22.7975°E is a mapped track in the sprout), Nairobi at zoom 11 by level |
+| Looked at | `render.py tiles <public URL>` over Esri imagery: the world at zoom 1, Africa at zoom 4, gauteng-waterberg and chinko at zoom 8, the shard corner at 22.5°E 21.94°S at zoom 8 (no seam; the straight north–south line at 22.7975°E is a mapped track in the sprout), Nairobi at zoom 11 by level. The user: `preview.py --remote` draws it in Safari and Chrome on macOS (18 November 2026), and the world view reads as heavy, since 46% of road pixels at zoom 2 are shade 1 (share under 0.9%); the paint is for task 04 to tune |
 | Virtual machines left running | none |
 
 **Cost.** The shard tasks ran 16.6 task-hours with start-up (10.8 hours in the shards), 8 of them a second time after a spot preemption, on at most 12 spot `e2-standard-2` for 1 h 56 min, so 17–23 machine-hours at about $0.035: about $0.60–0.80, plus about $0.03 of standard disk. The pilot and the merge add about $0.02. About $0.65–0.85 in all, inside the approved $0.7–1.4. Storage is about $0.11 a month at $0.023 per GB. Reading the sprout inside the region cost nothing.
