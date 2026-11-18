@@ -191,3 +191,38 @@ Reading Overture costs nothing, and reading the seed inside `europe-west1` is fr
 **Check against task 01.** Read through the published VRT: the chinko window is the task 01 sprout cell for cell. The gauteng-waterberg window has the same 98 corner-touch cells as the pilot (see the window check above) and is the pilot cell for cell. A cell in open sea reads 0.
 
 **Cost.** At spot prices of about $0.07 an hour for `e2-standard-4` and $0.045 for `e2-highmem-2`: the seed, about 3 task-hours with start-up, is about $0.20; the sprout, about 11.5 task-hours with start-up and the cancelled run, is about $0.50, plus about $0.06 of standard disk. About $0.75 in all, inside the approved $1.0. Reading Overture and the seed cost nothing. Storage is about $0.95 a month for the seed and $0.11 for the sprout at $0.023 per GB. Both are above the estimate (37 GB and 2–3.5 GB): Overture has 6% more road rows than the footer sample implied, and there are 4.0 billion road cells against 1.8–3.1 billion.
+
+## Global tiles (task 03)
+
+```bash
+python roads/batch.py submit tiles --pilot 5-18-17 [--approved]   # one shard; prints the job, submits only with --approved
+python roads/batch.py submit tiles --approved                      # every shard, one task each, 12 at a time
+python roads/batch.py records tiles                                # totals from the shard records written so far
+python roads/batch.py submit merge --approved                      # after every shard has a record
+python roads/tiles.py local --sources DIR --work DIR               # the same flow on a folder of block COGs, nothing published
+```
+
+**Shards.** One shard per zoom 5 tile that meets a sprout block with a COG: 694 shards, each reading 1–4 blocks. Blocks are clipped to Web Mercator's ±85.0511°, so roads beyond it are not drawn. A task copies its blocks, builds a VRT over them, renders zoom 11 and reduces to zoom 5. A top-zoom tile reads the sprout cells under it with a margin of 2 cells, derives the road mask and the burn code in memory, and warps them: average for the share, max for the code. A tile with no road cell under it is skipped before any warp. The shard writes its archive, its zoom 5 share unquantised (`.root.npy`) and a record, last, under `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/tiles/shards/`. A record carries a hash of the tile settings, so a rerun skips a current shard and rebuilds a stale one.
+
+**Merge.** One task: it checks every shard record, builds zooms 0–4 from the root shares, streams the shards in tile id order through `tiles/pyramid.py`, rebuilds 16 zoom 8 subtrees from the sprout VRT, weighted by shard tile count, and compares every tile byte for byte. It then uploads with `Cache-Control: public, max-age=31536000, immutable`, checks a 206 Range answer, and deletes the shards. It refuses to overwrite an archive that exists.
+
+**Window check.** The task 01 windows built again through `local`. From the task 01 window sprouts, both archives are the task 01 archives tile for tile (262 and 90 tiles); `window` with the in-memory render also writes the task 01 files byte for byte, in 11.2 s at a peak of 0.4 GB for gauteng-waterberg against 15.5 s and 2.2 GB. From the published block COGs cut to the windows: chinko is identical; gauteng-waterberg differs in 65 zoom 11 pixels (in 30 tiles) and their parents, every one within 2 cells of the 98 corner-touch cells recorded in task 02.
+
+### Runs
+
+**Pilot, shard `5-18-17`** (22.5°E to 33.75°E, 11.18°S to 21.94°S: Zambia, Zimbabwe, Malawi and northern Mozambique; blocks 20S_020E, 20S_030E, 30S_020E, 30S_030E). The task named the shard holding Gauteng, which is `5-18-18`; `5-18-17` was picked by mistake and is as dense. Submitted 18 November 2026 at 09:59 UTC, approved with the task file (expected under $0.05). One spot `e2-standard-2`, 30 GB `pd-standard`.
+
+- job: `roads-2026-10-v1-tiles-pilot-5-18-17-202611180958`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/tiles/shards/5-18-17.pmtiles`, `.root.npy` and `.json`; the full run skips this shard
+- status: `gcloud batch jobs describe roads-2026-10-v1-tiles-pilot-5-18-17-202611180958 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-tiles-pilot-5-18-17-202611180958 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 476 s. 5,154 tiles (3,793 at zoom 11 of the 4,096 possible, every tile at zooms 5–9), 36,966,178 bytes, 469.5 s in the shard of which 1.9 s copying the four blocks, peak memory 0.46 GB. The shard holds 29,865,020 road cells (counted from the block COGs), so 1.24 bytes and 15.7 µs a road cell, 0.12 s a zoom 11 tile.
+
+**Revised cost, from the pilot.** For approval before the full jobs.
+
+| Job | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Shards | 693 more shards, 4.02 billion road cells, 135 times the pilot's. Scaled by road cells, 17.6 task-hours; sparse shards cost more per road cell (more tiles with few roads), so 15–35 | spot `e2-standard-2`, 30 GB `pd-standard`, 12 at a time, about 1.5–3 hours of wall time | about $0.55–1.25, plus about $0.06 of disk | 4–7 GB of shards in scratch until the merge deletes them | |
+| Merge | fetch the shards, write the archive, rebuild 16 zoom 8 subtrees from the sprout VRT, upload | one spot `e2-standard-4`, 60 GB `pd-standard`, about 1 hour | about $0.10 | 4–7 GB (1.0–1.8 bytes a road cell; the task 01 windows stored 0.73 dense and 2.5 sparse) | about $0.09–0.16 |
+
+About $0.7–1.4 in all, against $0.30–0.80 in the first estimate: the sprout has 4.0 billion road cells against 1.8–3.1 billion, and a zoom 11 tile takes 0.12 s against the 0.03–0.1 s assumed. Reads of the sprout and the shards inside `europe-west1` are free. Counting the pilot's road cells copied three block COGs (69 MB) to the laptop, under $0.01.
