@@ -236,3 +236,23 @@ Two blocks, approved with the task file for under $0.05: `E000N20` (Google's edg
 - status: `gcloud batch jobs describe sprout-buildings-2023-v1-pilot-202611181329 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete sprout-buildings-2023-v1-pilot-202611181329 --location=europe-west1 --project=nature-watch-387210`
 - records: `python sprout/buildings.py records --pilot`
+- result: succeeded, run duration 757 s (13:30:35 to 13:43:13 UTC), first attempt. Batch deleted the machine when the task ended.
+
+| Block | Bytes | Google cells | TEMPO cells | Built cells, Google / TEMPO | TEMPO cells the seed rule set to 0 | Seconds | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `E000N20` | 5,654,694 | 1,577,416,721 | 22,582,980 | 772,834 / 9,245 | 8,049 | 395.5 | 2,310,819,840 |
+| `E000N40` | 157,629,895 | 0 | 1,170,625,384 | 0 / 145,962,137 | 792,534 | 357.0 | 2,666,610,688 |
+
+- Header of `E000N20`: 40,000 × 40,000, origin 0°, 30° N, 0.00025°, EPSG:4326, two Byte bands `share` and `source`, nodata 255, DEFLATE, 512 px blocks, no overviews.
+- `check --pilot`: in-salah-south is all Google (50,576 cells), 0.0001 km², and no TEMPO cell is shown. Its `ee_box.py` mean was not cached in task 01; the box's highest Google presence there was 0.16. Saint-Flour is all TEMPO, 0.6780 km² against 0.6779 from `tempo_kept`.
+- **Google's edge is not near 22.7° N.** Google is the source for 98.6% of `E000N20`, up to 30° N, except a strip east of about 9.6° E. The 2023 tile index has footprints up to 37.9° N between 0° and 10° E, and the COGs read real values there: at 27° N 3° E and 25° N 5.87° E, no pixel is −99 and the highest presence is below 10⁻⁵. The parcel's 22.7° N edge, and task 04's window there, need correcting in the app repo.
+
+### Expected cost of the full run, written 18 November 2026 before it
+
+- **Work:** 488 blocks (145 with a Google seed, 343 TEMPO only) in 24 tasks of 18–23 blocks, 12 at a time (24 `E2_CPUS`). The pilot blocks took 357–396 s each. Every block warps its whole grid, even a mostly sea one, so take 375 s a block: about 51 task-hours, plus about 1 minute of start-up per task.
+- **Wall time:** about 4–5 hours, in two waves of 12 tasks of about 2 hours. The task limit is 8 hours.
+- **Machine:** spot `e2-standard-2`, 7 GB requested, peak 2.7 GB in the pilot. 50 GB `pd-standard` disk.
+- **Compute:** about $1.50–2.00 at $0.03–0.04 an hour. Disk about $0.15. A preempted task resumes from its last finished block.
+- **Stored:** a sparse Google block is a few MB, and a dense TEMPO block like `E000N40` is 158 MB. The Google seed is 5.0 GB over 145 blocks, and perhaps 60–100 TEMPO blocks are dense, so about 10–25 GB, $0.25–0.60 a month at $0.023 per GB.
+- **Transfer:** the seeds and the sprout are all in `nature-watch-bucket` (EU), read from `europe-west1`, so no egress. About 1,000 write operations, under $0.01.
+- About $2.50 at most in all, with storage of $0.25–0.60 a month after it. The pilot objects in the scratch prefix are deleted once the full run is checked.
