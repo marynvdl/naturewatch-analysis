@@ -240,6 +240,9 @@ def test_burn_source_matches_burn_and_filters_neighbours(tmp_path):
     bounds = (0.0, 0.0, 0.001, 0.001)
     source = tmp_path / "burn.fgb"
     assert sprout.write_burn_source(con, [str(here), str(there)], bounds, RECIPE, source) == 4  # the far road is left out
+    nowhere = tmp_path / "nowhere.fgb"
+    assert sprout.write_burn_source(con, [str(there)], bounds, RECIPE, nowhere) == 0  # nothing reaches in
+    assert not nowhere.exists()
     burned = sprout.burn_source(source, bounds, RECIPE)
     codes = burned.GetRasterBand(1).ReadAsArray()
     assert (codes == sprout.burn(here, bounds, RECIPE)).all()

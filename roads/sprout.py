@@ -145,6 +145,9 @@ def write_burn_source(con, seed_paths: list[str], bounds, recipe: dict, dest: Pa
     con.execute(
         f"COPY ({query}) TO '{dest}' (FORMAT GDAL, DRIVER 'FlatGeobuf', LAYER_CREATION_OPTIONS 'SPATIAL_INDEX=NO')"
     )
+    if not dest.exists() or dest.stat().st_size == 0:  # no road reaches into bounds: DuckDB leaves an empty file
+        dest.unlink(missing_ok=True)
+        return 0
     vector = gdal.OpenEx(str(dest), gdal.OF_VECTOR)
     count = vector.GetLayer(0).GetFeatureCount()
     vector = None

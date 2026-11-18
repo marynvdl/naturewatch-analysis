@@ -55,6 +55,7 @@ SHAPES = {
         "memory_mib": "14336",
         "duckdb_memory": "6GB",
         "disk_gb": 100,
+        "disk_type": "pd-standard",  # pd-balanced counts against the region's 500 GB SSD quota
         "max_run_seconds": 6 * 3600,
         "max_retries": 3,
     },
@@ -220,7 +221,7 @@ def run_sprout(recipe: dict, plan: dict, work: Path, pilot: bool) -> None:
                 if result["bytes"]:
                     upload(local, data)
                     local.unlink()
-            source.unlink()
+            source.unlink(missing_ok=True)
         pixel = recipe["grid"]["pixel_size_deg"]
         west, north, cols, rows = sproutmod.snapped(bounds, pixel, tuple(recipe["grid"]["origin"]))
         record = {
@@ -482,7 +483,7 @@ def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool) -> di
                     "policy": {
                         "machineType": shape["machine"],
                         "provisioningModel": "SPOT",
-                        "bootDisk": {"sizeGb": shape["disk_gb"], "type": "pd-balanced"},
+                        "bootDisk": {"sizeGb": shape["disk_gb"], "type": shape.get("disk_type", "pd-balanced")},
                     }
                 }
             ],
