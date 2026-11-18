@@ -2,7 +2,7 @@
 
 Scripts for the Roads layer: a seed read from Overture's transportation theme, a sprout on the stats grid, and raster PMTiles from that sprout. The recipe is [`cookbook/recipes/roads-2026-10-v1.yaml`](../cookbook/recipes/roads-2026-10-v1.yaml). The parcel is `docs/parcels/roads.md` in naturewatch-app.
 
-Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout are task 02, run as Batch jobs with `roads/batch.py`. The tiles are task 03.
+Task 01 ran these on the laptop for ten small boxes and two windows. The user approved the levels, the burn rule, top zoom 11 and `share_full` 0.25 on 17 November 2026, and kept the seed. The global seed and sprout were written on 18 November 2026 by Batch jobs from `roads/batch.py` (task 02). The tiles are task 03.
 
 ## Run
 
@@ -135,7 +135,7 @@ A record is written after its object, so a block with a record is done, and a re
 **Sprout pilot, block `30S_020E`.** Submitted 17 November 2026 at 18:05 UTC. One spot `e2-standard-2`, 100 GB disk. Only this block's seed existed, so roads from its neighbours are missing near its edges (`seed_missing` in the record).
 
 - job: `roads-2026-10-v1-sprout-pilot-30s-020e-202611171804`, `europe-west1`
-- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/30S_020E.tif` and `.json`, removed at the end of the task
+- output: `gs://nature-watch-bucket/scratch/roads/roads-2026-10-v1/pilot/30S_020E.tif` and `.json`, removed on 18 November 2026
 - result: succeeded, run duration 92 s. 1,995,149 features, 1.6 billion cells, 26,306,817 road cells (track 10,881,011; minor 9,653,522; main 5,210,866; major 561,418), 29,245,015 bytes (1.11 a road cell), 84.0 s for the block of which 4.4 s copying the seed, peak memory 3.6 GB.
 
 **Window check.** The gauteng-waterberg window cut from the pilot COG against the task 01 window sprout: 98 of 64,000,000 cells differ, and the window has 27 fewer road cells (4,744,115 against 4,744,142). Each of the 87 cells that is a road cell in one and not the other has a road cell beside it in both; 2 road cells change level and 9 change only surface. These are lines that pass within rounding error of a cell corner, where `ALL_TOUCHED` gives a different answer for a different raster extent or machine: burning the same window rows on the laptop onto the whole block's raster still differs from the pilot in 67 cells. Every Batch task burns a whole block on the same image, so the global sprout is consistent with itself.
@@ -174,3 +174,20 @@ Reading Overture costs nothing, and reading the seed inside `europe-west1` is fr
 - job: `roads-2026-10-v1-sprout-202611180725`, `europe-west1`
 - status: `gcloud batch jobs describe roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete roads-2026-10-v1-sprout-202611180725 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 4,884 s (81 minutes), 20 of 20 tasks. 648 records, 367 blocks with road cells. `collect` wrote `roads-2026-10.vrt`, `collection.json` and `roads-2026-10-v1.json` at 09:31 UTC.
+
+### Global result
+
+| | Seed | Sprout |
+| --- | --- | --- |
+| Blocks with data | 363 | 367 |
+| Rows or features | 307,681,940 rows | 307,820,053 features burned (a road that crosses a block edge is burned in each block it reaches) |
+| Road cells | | 4,020,450,736: track 1,889,210,878; minor 1,296,023,376; main 694,017,118; major 141,199,364 |
+| Road cells by surface | | paved 565,921,241; unpaved 843,373,541; the rest unknown |
+| Bytes stored | 41,171,418,381 with the records | 4,893,546,903 with the VRT and STAC files |
+| Block time summed | 8,020 s | 33,912 s, plus 3,925 s in the cancelled run |
+| Peak memory | 12.2 GB (`40N_000E`) | 8.7 GB |
+
+**Check against task 01.** Read through the published VRT: the chinko window is the task 01 sprout cell for cell. The gauteng-waterberg window has the same 98 corner-touch cells as the pilot (see the window check above) and is the pilot cell for cell. A cell in open sea reads 0.
+
+**Cost.** At spot prices of about $0.07 an hour for `e2-standard-4` and $0.045 for `e2-highmem-2`: the seed, about 3 task-hours with start-up, is about $0.20; the sprout, about 11.5 task-hours with start-up and the cancelled run, is about $0.50, plus about $0.06 of standard disk. About $0.75 in all, inside the approved $1.0. Reading Overture and the seed cost nothing. Storage is about $0.95 a month for the seed and $0.11 for the sprout at $0.023 per GB. Both are above the estimate (37 GB and 2–3.5 GB): Overture has 6% more road rows than the footer sample implied, and there are 4.0 billion road cells against 1.8–3.1 billion.
