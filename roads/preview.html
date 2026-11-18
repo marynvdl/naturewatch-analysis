@@ -64,7 +64,7 @@ const topZoom = name => Number((name.match(/-z(\d+)/) || [0, 11])[1]);
 const P = new URLSearchParams(location.search);
 const archiveSel = document.getElementById('archive');
 for (const a of C.archives) archiveSel.add(new Option(a, a));
-archiveSel.value = P.get('a') || C.archives.find(a => a.includes('gauteng-waterberg-z11-full')) || C.archives[0];
+archiveSel.value = P.get('a') || C.archives.find(a => a.startsWith('https://')) || C.archives.find(a => a.includes('gauteng-waterberg-z11-full')) || C.archives[0];
 const basemapSel = document.getElementById('basemap');
 basemapSel.value = P.get('b') || 'satellite';
 
@@ -75,7 +75,7 @@ for (const [name, b] of Object.entries(C.windows)) {
   btn.onclick = () => {
     const prefix = name + '-z';
     const match = C.archives.find(a => a.startsWith(prefix) && a.includes(archiveSel.value.replace(/^.*?(-z\d+.*)$/, '$1'))) || C.archives.find(a => a.startsWith(prefix));
-    if (match) { archiveSel.value = match; addRoads(); }
+    if (match && !archiveSel.value.startsWith('https://')) { archiveSel.value = match; addRoads(); }  // the global archive stays selected
     map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 });
   };
   win.appendChild(btn);
