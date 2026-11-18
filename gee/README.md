@@ -70,3 +70,7 @@ If you fix either, fix it for every year at once, or the years stop being compar
 - Global coverage, not only Africa.
 - Year windows that follow the dry and rainy seasons per latitude.
 - A better layout than 25 fixed blocks. The true resolution of this layer is 1 km, so the 30 m export is far larger than it needs to be (about 1.1 GB per year for data that is about 3 MB at 1 km).
+
+## Buildings
+
+`buildings/export_google.py` writes the Google seed of the Buildings 2023 layer: one export per 10° block in `buildings/google-2023-blocks.json`. How to run it and what it cost are in [`seed/README.md`](../seed/README.md), "buildings 2023".

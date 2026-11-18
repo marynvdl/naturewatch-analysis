@@ -53,9 +53,26 @@ seeds:
     # Earth Engine reads its mean pyramid at the sprout grid. No threshold. Chosen by the user on 17 November 2026.
     route: earth-engine
     blocks_deg: 10
+    # The blocks are listed in gee/buildings/google-2023-blocks.json as [west, south].
+    block_count: 145
+    # Named by the block's south-west corner, e.g. W010N00.tif for 10 W to 0, 0 to 10 N.
+    object: "{block}.tif"
+    dtype: uint8
+    scale: 250
+    nodata: 255
   tempo:
     id: seed-buildings-tempo-2023q4-v1
     path: gs://nature-watch-bucket/seeds/buildings/tempo/2023q4/v1/
+    # One Batch job downloads the source tiles and writes one COG per zoom 4 Web Mercator tile.
+    # The source tiles are 822,199 small objects; stored one by one their write charges were about $8.
+    # The mosaics keep TEMPO's grid (EPSG:3857, zoom 11 pixels, about 76.4 m) and band 1 unchanged.
+    # Band 2 of the source is not kept. Pixels with no source tile are nodata.
+    route: batch-mosaic
+    mosaic_zoom: 4
+    # x and y are the XYZ zoom 4 tile. Each mosaic is 32,768 x 32,768 px.
+    object: "z4-{x}-{y}.tif"
+    dtype: float32
+    nodata: -1
 sprout:
   id: buildings-2023-v1
   path: gs://nature-watch-bucket/sprouts/buildings/2023/v1/

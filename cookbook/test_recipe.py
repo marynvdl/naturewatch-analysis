@@ -186,6 +186,9 @@ def test_the_buildings_recipe_names_both_sources_and_the_merge():
     assert recipe["sprout"]["bands"]["source"]["values"] == {"none": 0, "google": 1, "tempo": 2}
     assert recipe["sprout"]["google"]["value"] == "mean-presence"
     assert recipe["seeds"]["google"]["route"] == "earth-engine"
+    assert recipe["seeds"]["google"]["block_count"] == 145
+    assert recipe["seeds"]["tempo"]["route"] == "batch-mosaic"
+    assert recipe["seeds"]["tempo"]["mosaic_zoom"] == 4
     assert recipe["sprout"]["tempo"]["seed_share"] > 0
     assert recipe["sources"]["tempo"]["tile_count"] == 822199
     assert recipe["sources"]["google"]["tile_count"] == 627480
