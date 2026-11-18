@@ -148,3 +148,12 @@ A record is written after its object, so a block with a record is done, and a re
 | Sprout | 648 blocks in 20 tasks; about 300 have roads, at 60–180 s each with the neighbour copies; the rest write only a record | spot `e2-standard-2`, 5–15 task-hours, about 20–45 minutes of wall time | about $0.15–0.60 | 2–3.5 GB (1.1 bytes a road cell, 1.8–3.1 billion road cells) | about $0.05–0.08 |
 
 Reading Overture costs nothing, and reading the seed inside `europe-west1` is free. Both pilots together used about 2.5 machine-minutes, under $0.01.
+
+**Seed, all blocks.** Approved by the user on 18 November 2026 with the revised cost above. Submitted at 06:33 UTC: 20 tasks, 648 blocks, spot `e2-standard-4`, 50 GB disk, up to 3 retries a task.
+
+- job: `roads-2026-10-v1-seed-202611180633`, `europe-west1`
+- output: `gs://nature-watch-bucket/seeds/roads/overture/2026-10-21.0/`, `<block>.parquet` and `<block>.json`
+- status: `gcloud batch jobs describe roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete roads-2026-10-v1-seed-202611180633 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python roads/batch.py records seed`
