@@ -254,3 +254,60 @@ def test_burn_source_matches_burn_and_filters_neighbours(tmp_path):
     from osgeo import gdal
     written = gdal.Open(str(tmp_path / "b.tif")).ReadAsArray()
     assert (written[0] == level).all() and (written[1] == surface).all()
+
+
+# ---- global tiles (task 03) -----------------------------------------------------------
+
+
+def test_shard_plan_lists_blocks_and_clips_the_poles():
+    plan = tiles.shard_plan(["30S_020E", "90S_180W", "80N_020W"])
+    by_id = {shard["id"]: shard["sources"] for shard in plan}
+    assert {i for i, s in by_id.items() if "30S_020E" in s} == {"5-17-17", "5-18-17", "5-17-18", "5-18-18"}
+    assert tiles.block_cells(["90S_180W"])["90S_180W"][1] == -tiles.MERCATOR_LAT
+    assert tiles.block_cells(["80N_020W"])["80N_020W"][3] == tiles.MERCATOR_LAT
+    assert {s["y"] for s in plan if s["sources"] == ["90S_180W"]} == {28, 29, 30, 31}  # 80°S to 85.05°S
+    assert {s["y"] for s in plan if s["sources"] == ["80N_020W"]} == {0, 1, 2, 3}
+
+
+def test_codes_of_bands_match_the_burn_codes():
+    level = np.array([0, 1, 1, 1, 4, 4, 4], dtype=np.uint8)
+    surface = np.array([0, 0, 2, 1, 0, 2, 1], dtype=np.uint8)
+    codes = tiles.codes_of(level, surface)
+    assert codes.tolist() == [0, 1, 2, 3, 10, 11, 12]
+    assert (np.stack(sprout.decode(codes)) == np.stack([level, surface])).all()
+
+
+def test_shards_and_merge_equal_the_window_build(tmp_path):
+    """A small sprout named as a block, built through shard and merge, gives the same tiles as one window build."""
+    from osgeo import gdal
+
+    pixel = 0.00025
+    west, north, cols, rows = 27.5, -25.5, 1600, 1200  # inside block 30S_020E
+    rng = np.random.default_rng(3)
+    level = np.zeros((rows, cols), dtype=np.uint8)
+    for r in rng.integers(0, rows, 25):
+        level[r, rng.integers(0, cols // 2) :] = rng.integers(1, 5)
+    for c in rng.integers(0, cols, 25):
+        level[rng.integers(0, rows // 2) :, c] = rng.integers(1, 5)
+    surface = np.where(level > 0, rng.integers(0, 3, level.shape), 0).astype(np.uint8)
+    sources = tmp_path / "blocks"
+    sources.mkdir()
+    out = gdal.GetDriverByName("GTiff").Create(str(sources / "30S_020E.tif"), cols, rows, 2, gdal.GDT_Byte)
+    out.SetGeoTransform((west, pixel, 0, north, 0, -pixel))
+    out.SetProjection("EPSG:4326")
+    out.GetRasterBand(1).WriteArray(level)
+    out.GetRasterBand(2).WriteArray(surface)
+    out = None
+    recipe = {
+        "id": "roads-test",
+        "source": {"release": "test", "attribution": "test", "licence": "test"},
+        "sprout": {**RECIPE["sprout"], "path": "unused"},
+        "tiles": {"max_zoom": 9, "share_steps": 8, "share_full": 0.25},
+    }
+    stats = tiles.command_local(recipe, sources, tmp_path / "work", 9)
+    bounds = (west, north - rows * pixel, west + cols * pixel, north)
+    tiles.build(sources / "30S_020E.tif", bounds, 9, 8, tmp_path / "window.pmtiles", 0.25)
+    sharded = dict(tiles.pyramid.read_archive(tmp_path / "work" / "roads.pmtiles"))
+    window = dict(tiles.pyramid.read_archive(tmp_path / "window.pmtiles"))
+    assert sharded == window
+    assert stats["upper_tiles"] == 5 and stats["shards"] == 4 and stats["shards_with_tiles"] == 1
