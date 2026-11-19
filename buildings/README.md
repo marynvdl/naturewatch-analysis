@@ -434,3 +434,30 @@ No compute in the cloud. Reads from the sprout through the VRT: 6,524,064 bytes 
 ### Approval
 
 Approved by the user on 19 November 2026: top zoom 12, graded, `full` 0.25, mean parent, empty tiles dropped, and the Google speckle rule (floor 0.012, seed 0.15 within 2 km). The settings are on the recipe. The global estimate above holds: the Google rule removes about as many cells as the floor did (27% at Kongoussi).
+
+## Global tiles (task 05)
+
+```bash
+python buildings/batch.py plan                                  # data/buildings/batch/plan.json: 557 shards over 363 blocks
+python buildings/batch.py local kocho-window edge-window        # the shard and merge code on a task 04 cut, against the task 04 archive
+python buildings/batch.py submit tiles --pilot 5-15-14 [--approved]   # one shard; prints the job, submits only with --approved
+python buildings/batch.py submit tiles --approved               # every shard, one task each, 12 at a time
+python buildings/batch.py records                               # totals from the shard records written so far
+python buildings/batch.py submit merge --approved               # after every shard has a record
+```
+
+**Shards.** One shard per zoom 5 tile that meets a sprout block with a COG: 557 shards. A shard copies every block that meets it widened by 74 cells (0.0185°), 1–9 blocks and at most 0.9 GB, builds a VRT over them, renders zoom 12 and reduces to zoom 5 with the recipe's settings. A top-zoom tile reads the share and source bands under it with 72 more cells on every side, applies Google's speckle rule to what it read (`tiles.py speckle_rule`), and warps the share with `average`. So a tile is the same wherever the source is cut, and shards meet without a seam. A tile with no building is not stored, but feeds its parent. The shard writes its archive, its zoom 5 root (share and valid, unquantised, `.root.npz`) and a record, last, under `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`. A record carries a hash of the settings, so a rerun skips a current shard. The shard and merge code is `tiles/shards.py`, shared with roads. Spot `e2-standard-2`, 30 GB `pd-standard`.
+
+**Merge.** One task: it checks every shard record, builds zooms 0–4 from the roots, streams the shards in tile id order, rebuilds 12 random zoom 8 subtrees and 4 on a shard's west or north edge from the sprout VRT and compares them byte for byte, uploads with `Cache-Control: public, max-age=31536000, immutable`, checks a 206 Range answer and deletes the shards. It refuses to overwrite an archive that exists. Spot `e2-standard-4`, 150 GB `pd-standard`.
+
+**Local check, 19 November 2026.** Through `local`, from the task 04 cuts on the laptop. Every tile that lies wholly inside the window is the task 04 archive's tile byte for byte (approved settings): 17 of 17 at Kocho, 63 of 63 at the edge window. The edge archive holds 11 more tiles, in the read margin outside the window. The sample check rebuilt 42 tiles from the Kocho cut and agreed. Each window took 4–6 s at a peak of 0.45 GB.
+
+### Runs
+
+**Pilot, shard `5-15-14`** (11.25° W to 0°, 11.18° N to 21.94° N: Burkina Faso, Mali and Mauritania, with Kongoussi; blocks `E000N10`, `E000N20`, `W010N10`, `W010N20`, `W020N10`, `W020N20`, 117,525,228 bytes). Approved with the task file, expected under $0.05. Submitted 19 November 2026 at 19:52 UTC. One spot `e2-standard-2`, 30 GB `pd-standard`.
+
+- job: `buildings-2023-v1-tiles-pilot-5-15-14-202611191951`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/5-15-14.pmtiles`, `.root.npz` and `.json`; the full run skips this shard
+- status: `gcloud batch jobs describe buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
+- result: pending
