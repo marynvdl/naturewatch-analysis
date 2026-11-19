@@ -36,3 +36,7 @@ boxes:
   - {name: ti-tree, kind: sparse, lat: -22.13, lon: 133.42, size_km: 6, label: "Ti Tree and stations, Northern Territory, Australia"}
   - {name: korgalzhyn, kind: sparse, lat: 50.58, lon: 70.01, size_km: 6, label: "Korgalzhyn, steppe village, Kazakhstan"}
   - {name: lairg, kind: sparse, lat: 58.03, lon: -4.42, size_km: 6, label: "Lairg and crofts, Scottish Highlands"}
+# Google cut test (task 03b): presence below 0.2 set to 0 before the mean into sprout cells, exported from Earth Engine.
+  - {name: kocho-cut, kind: cut-test, lat: 6.30532, lon: 23.859, size_km: 10, label: "Kocho, Chinko, Central African Republic: seed v1 speckle"}
+  - {name: bria-cut, kind: cut-test, lat: 6.537, lon: 21.987, size_km: 10, label: "Bria, Central African Republic"}
+  - {name: yalinga-cut, kind: cut-test, lat: 6.48, lon: 23.23, size_km: 10, label: "Yalinga, Chinko's western gate: compounds in fields. Chinko's bush has no huts away from Kocho"}
