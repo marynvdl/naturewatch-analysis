@@ -27,8 +27,6 @@ import argparse
 import json
 import math
 import os
-import random
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -45,6 +43,7 @@ import cropland  # noqa: E402  tiles/cropland.py
 import global_cropland as store  # noqa: E402  storage, upload and Range check helpers
 import pyramid  # noqa: E402
 import seed as seedmod  # noqa: E402
+import shards  # noqa: E402  tiles/shards.py
 import sprout as sproutmod  # noqa: E402
 import transcode  # noqa: E402
 
@@ -213,7 +212,6 @@ def build(sprout_path: Path, bounds, top_zoom: int, steps: int, dest: Path, full
 CODE_VERSION = "1"
 MERCATOR_LAT = 85.0511287798  # Web Mercator stops here; roads beyond it are not drawn
 BATCH_ENV = "NATUREWATCH_SPROUT_BATCH"  # set by roads/batch.py on every roads job
-CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 
 def block_cells(names) -> dict[str, pyramid.Bounds]:
@@ -268,178 +266,51 @@ def archive_metadata(recipe: dict, config: dict) -> dict:
     }
 
 
-def shard_files(scratch: str, shard: dict) -> tuple[str, str, str]:
-    base = scratch.rstrip("/") + "/shards/" + shard["id"]
-    return base + ".pmtiles", base + ".json", base + ".root.npy"
-
-
 def coders(config: dict):
     steps, full = config["share_steps"], config["share_full"]
     return lambda tile: encode(tile, steps, full)
 
 
-def run_shard(recipe: dict, shard: dict, work: Path, scratch: str, sources: str, top: int | None = None) -> dict:
-    """Build one shard. Skips it when its record is current and its files are whole."""
+def shard_layer(recipe: dict, top: int | None = None) -> shards.ShardLayer:
+    """Roads for tiles/shards.py: the root tile is kept as its share alone."""
     config = settings(recipe, top)
-    digest = pyramid.config_digest(config)
-    file_path, record_path, root_path = shard_files(scratch, shard)
-    record = store.read_json(record_path)
-    if record and record.get("config") == digest and (
-        record["tiles"] == 0 or (store.size_of(file_path) == record["bytes"] and store.exists(root_path))
-    ):
-        print(f"shard {shard['id']} is done, skipping", flush=True)
-        return record
-    started = time.perf_counter()
-    folder = work / shard["id"]
-    for name in shard["sources"]:
-        store.copy(sources.rstrip("/") + f"/{name}.tif", folder / "src" / f"{name}.tif")
-    fetched = time.perf_counter() - started
-    vrt = folder / "shard.vrt"
-    gdal.BuildVRT(str(vrt), [str(folder / "src" / f"{name}.tif") for name in shard["sources"]]).FlushCache()
-    render = layer(vrt)
-    out = folder / f"{shard['id']}.pmtiles"
-    bounds = store.union([block_cells([name])[name] for name in shard["sources"]])
-    roots: list = []
-    result = pyramid.build_shard(
-        shard, config["top_zoom"], render, reduce, coders(config), out, bounds, archive_metadata(recipe, config), roots
+    return shards.ShardLayer(
+        name="roads",
+        config=config,
+        open_render=layer,
+        reduce=reduce,
+        encode=coders(config),
+        save_root=lambda tile: {"share": tile.share.astype(np.float32)},
+        load_root=lambda arrays: RoadTile(arrays["share"], None, SHARD_ZOOM),
+        metadata=archive_metadata(recipe, config),
+        source_bounds=lambda name: block_cells([name])[name],
+        shard_zoom=SHARD_ZOOM,
+        top_zoom=config["top_zoom"],
     )
-    render = None
-    result.update(
-        config=digest, sources=shard["sources"], fetch_seconds=round(fetched, 1),
-        peak_memory_bytes=seedmod.peak_memory_bytes(),
-    )
-    if result["tiles"]:
-        store.copy(out, file_path)
-        if store.size_of(file_path) != result["bytes"]:
-            raise OSError(f"{file_path} is {store.size_of(file_path)} bytes, expected {result['bytes']}")
-        local_root = folder / "root.npy"
-        np.save(local_root, roots[0].share.astype(np.float32))
-        store.copy(local_root, root_path)
-    store.write_json(record_path, result)  # last, so a record means a finished shard
-    shutil.rmtree(folder, ignore_errors=True)
-    print(json.dumps({k: v for k, v in result.items() if k != "tiles_by_zoom"}), flush=True)
-    return result
+
+
+def sprout_vrt(recipe: dict) -> str:
+    return store.vsi(recipe["sprout"]["path"].rstrip("/") + "/" + recipe["sprout"]["id"].rsplit("-", 1)[0] + ".vrt")
+
+
+def run_shard(recipe: dict, shard: dict, work: Path, scratch: str, sources: str, top: int | None = None) -> dict:
+    return shards.run_shard(shard_layer(recipe, top), shard, work, scratch, sources)
 
 
 def run_merge(
     recipe: dict, plan: list[dict], work: Path, scratch: str, dest: str, top: int | None = None,
     verify_samples: int = 0, sprout: str | None = None, keep_scratch: bool = False, publish: bool = True,
 ) -> dict:
-    config = settings(recipe, top)
-    digest = pyramid.config_digest(config)
-    started = time.perf_counter()
-    if publish and store.exists(dest):
-        raise SystemExit(f"{dest} already exists. Remove it on purpose before merging again.")
-    records, missing = {}, []
-    for shard in plan:
-        file_path, record_path, root_path = shard_files(scratch, shard)
-        record = store.read_json(record_path)
-        if not record or record.get("config") != digest or (record["tiles"] and store.size_of(file_path) != record["bytes"]):
-            missing.append(shard["id"])
-        else:
-            records[shard["id"]] = record
-    if missing:
-        raise SystemExit(f"{len(missing)} of {len(plan)} shards are missing or not current: {', '.join(missing[:12])}")
-
-    local_files: dict[str, Path | None] = {}
-    roots: dict[tuple[int, int], RoadTile] = {}
-    for shard in plan:
-        if records[shard["id"]]["tiles"] == 0:
-            local_files[shard["id"]] = None
-            continue
-        file_path, _record, root_path = shard_files(scratch, shard)
-        target = work / "shards" / f"{shard['id']}.pmtiles"
-        store.copy(file_path, target)
-        store.copy(root_path, work / "shards" / f"{shard['id']}.root.npy")
-        local_files[shard["id"]] = target
-        roots[(shard["x"], shard["y"])] = RoadTile(np.load(work / "shards" / f"{shard['id']}.root.npy"), None, SHARD_ZOOM)
-    fetched = time.perf_counter()
-
-    upper = pyramid.upper_levels(roots, SHARD_ZOOM, reduce, coders(config))
-    bounds = store.union([block_cells([name])[name] for shard in plan for name in shard["sources"]])
-    archive = work / "roads.pmtiles"
-    stream = pyramid.merge_entries(plan, local_files, records, SHARD_ZOOM, config["top_zoom"], upper)
-    stats = pyramid.write_archive(
-        stream, archive, pyramid.archive_header(bounds, 0, config["top_zoom"], center_zoom=2), archive_metadata(recipe, config)
+    return shards.run_merge(
+        shard_layer(recipe, top), plan, work, scratch, dest, sprout or sprout_vrt(recipe), verify_samples,
+        keep_scratch=keep_scratch, publish=publish,
     )
-    expected = len(upper) + sum(record["tiles"] for record in records.values())
-    if stats["tiles"] != expected:
-        raise pyramid.MergeError(f"wrote {stats['tiles']} tiles, shards and upper zooms give {expected}")
-    built = time.perf_counter()
-    by_zoom: dict[str, int] = {}
-    for record in records.values():
-        for zoom, count in record.get("tiles_by_zoom", {}).items():
-            by_zoom[zoom] = by_zoom.get(zoom, 0) + count
-    stats.update(
-        shards=len(plan),
-        shards_with_tiles=sum(1 for record in records.values() if record["tiles"]),
-        upper_tiles=len(upper),
-        tiles_by_zoom=dict(sorted(by_zoom.items(), key=lambda item: int(item[0]))),
-        shard_wall_seconds_total=round(sum(r["wall_seconds"] for r in records.values()), 1),
-        shard_peak_memory_bytes_max=max(r["peak_memory_bytes"] for r in records.values()),
-    )
-    if verify_samples:
-        weights = {shard_id: record["tiles"] for shard_id, record in records.items()}
-        stats["verify"] = verify_against_sprout(recipe, config, archive, plan, weights, verify_samples, sprout)
-    if publish:
-        store.upload_archive(archive, dest)
-        store.set_cache_control(dest, CACHE_CONTROL)
-        if dest.startswith("gs://nature-watch-tiles/"):
-            stats["range_check"] = store.check_range(dest)
-        stats["cache_control"] = CACHE_CONTROL
-    if not keep_scratch:
-        store.delete_prefix(scratch.rstrip("/") + "/shards")
-    stats.update(
-        merge_wall_seconds=round(time.perf_counter() - started, 1),
-        fetch_seconds=round(fetched - started, 1),
-        build_seconds=round(built - fetched, 1),
-        peak_memory_bytes=seedmod.peak_memory_bytes(),
-    )
-    print("merge " + json.dumps(stats), flush=True)
-    return stats
-
-
-def verify_against_sprout(
-    recipe: dict, config: dict, archive: Path, plan: list[dict], weights: dict[str, int], samples: int,
-    sprout: str | None = None, root_zoom: int = 8,
-) -> dict:
-    """Rebuild sample zoom 8 subtrees straight from the sprout VRT and compare every tile, present or absent, byte for byte.
-
-    Samples are drawn from shards with tiles, weighted by their tile count, so most land where roads are.
-    """
-    source = sprout or store.vsi(recipe["sprout"]["path"].rstrip("/") + "/" + recipe["sprout"]["id"].rsplit("-", 1)[0] + ".vrt")
-    render = layer(source)
-    rng = random.Random(20261118)
-    top = config["top_zoom"]
-    span = 2 ** (root_zoom - SHARD_ZOOM)
-    checked, roots = 0, []
-    chosen = rng.choices(plan, weights=[weights.get(shard["id"], 0) for shard in plan], k=samples)
-    for shard in chosen:
-        root = (root_zoom, shard["x"] * span + rng.randrange(span), shard["y"] * span + rng.randrange(span))
-        entries: list[pyramid.Entry] = []
-        pyramid.build_subtree(root, top, render, reduce, coders(config), entries)
-        expected = dict(entries)
-        found = store.archive_lookup(archive, root, top)
-        if expected != found:
-            differing = sum(1 for key in set(expected) & set(found) if expected[key] != found[key])
-            raise pyramid.MergeError(
-                f"sample under {root} disagrees with the sprout: {len(set(expected) - set(found))} missing, "
-                f"{len(set(found) - set(expected))} extra, {differing} different"
-            )
-        checked += len(expected)
-        roots.append("/".join(map(str, root)))
-    return {"samples": samples, "root_zoom": root_zoom, "tiles_compared": checked, "roots": roots}
 
 
 def command_local(recipe: dict, sources: Path, work: Path, top: int | None) -> dict:
     """The whole sharded flow on a local folder of block COGs named like 30S_020E.tif. Nothing is published."""
     plan = shard_plan(sorted(path.stem for path in sources.glob("*.tif")))
-    scratch = str(work / "scratch")
-    for shard in plan:
-        run_shard(recipe, shard, work / "tmp", scratch, str(sources), top)
-    stats = run_merge(recipe, plan, work / "merge", scratch, str(work / "roads.pmtiles"), top, keep_scratch=True, publish=False)
-    store.copy(work / "merge" / "roads.pmtiles", work / "roads.pmtiles")
-    return stats
+    return shards.command_local(shard_layer(recipe, top), plan, sources, work)
 
 
 def main() -> None:
