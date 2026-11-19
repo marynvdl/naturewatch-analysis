@@ -728,6 +728,8 @@ def authorise_reads() -> None:
     token = subprocess.run(["gcloud", "auth", "print-access-token"], text=True, capture_output=True, check=True).stdout.strip()
     gdal.SetConfigOption("GDAL_HTTP_HEADERS", f"Authorization: Bearer {token}")
     gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
+    # buildings/compare.py limits /vsicurl/ to .tif; the check also opens the .vrt.
+    gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.vrt")
 
 
 def https(gs_path: str) -> str:

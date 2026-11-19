@@ -268,3 +268,43 @@ Approved by the user on 18 November 2026 with the expected cost above. Submitted
 - cancel: `gcloud batch jobs delete sprout-buildings-2023-v1-202611181407 --location=europe-west1 --project=nature-watch-387210`
 - totals so far: `python sprout/buildings.py records`
 - after it finishes: `python sprout/buildings.py collect`, then `python sprout/buildings.py check`
+- result: succeeded, run duration 21,583 s (6.0 hours, 14:09 to 20:09 UTC on 18 November 2026), 24 of 24 tasks. At 18:11 UTC Batch reported `CODE_GCE_QUOTA_EXCEEDED` once while starting a machine and went on. With that and uneven tasks, the run took longer than the 4–5 hour estimate. Batch deleted every machine; `gcloud compute instances list` is empty.
+- `collect` wrote `buildings-2023.vrt`, `collection.json` and `buildings-2023-v1.json` on 19 November 2026 at 07:25 UTC. The pilot objects and the code in `gs://nature-watch-bucket/scratch/sprout/buildings-2023-v1/`, 163,388,252 bytes, were deleted afterwards.
+
+### Global result
+
+| | |
+| --- | --- |
+| Blocks | 488 records; 363 COGs; 125 blocks with no cell from either source wrote only the record |
+| Bytes stored | 8,299,032,932 in the prefix: 8,298,520,056 of COGs, the VRT (207,111), the STAC files (86,113) and the records |
+| Largest block | `E110N30` (eastern China), 358,558,000 bytes |
+| Google cells | 101,749,685,092, of which 1,398,072,834 are above 0. Both equal the Google seed's `summary.json` |
+| TEMPO cells | 155,110,124,828, of which 4,060,572,082 are above 0. The seed rule set 192,734,912 cells to 0 |
+| Block time | 145,566 s summed (40.4 hours), 124–558 s a block, slowest `E170N50` |
+| Peak memory | 2,914,246,656 bytes in any block, of 7 GB requested |
+| Cost | about 41.5 machine-hours of spot `e2-standard-2` at $0.03–0.04, about $1.25–1.65, plus about $0.11 of `pd-standard` disk. Inside the approved $2.50. Storage about $0.19 a month at $0.023 per GB. No egress |
+
+### Check against task 01
+
+Read through the published VRT on 19 November 2026 with `python sprout/buildings.py check`. Task 01's figure for a Google box is `ee_box.py --value mean`; for a TEMPO box it is `compare.py tempo_kept` with seed 0.15 within 2 km.
+
+| Box | Source cells (none, Google, TEMPO) | Sprout km² | Task 01 km² |
+| --- | --- | ---: | ---: |
+| kongoussi | 0, 33,852, 0 | 1.3035 | 1.3042 |
+| mopti | 0, 33,852, 0 | 0.8577 | 0.8578 |
+| timia | 0, 34,580, 0 | 0.0793 | 0.0793 |
+| bardai | 0, 35,308, 0 | 0.1306 | 0.1308 |
+| mueda | 0, 33,488, 0 | 0.9519 | 0.9525 |
+| bria | 0, 33,124, 0 | 0.7953 | 0.7959 |
+| in-salah-south | 0, 50,576, 0 | 0.0001 | not cached |
+| saint-flour | 0, 0, 45,720 | 0.6780 | 0.6779 |
+| kansas | 0, 0, 60,168 | 0.0918 | 0.0917 |
+| ti-tree | 0, 0, 51,012 | 0.0232 | 0.0239 |
+| korgalzhyn | 5,631, 0, 67,809 | 0.3562 | 0.3563 |
+| lairg | 11,153, 0, 76,975 | 0.0712 | 0.0708 |
+
+- The Google boxes are 0.00–0.08% below task 01. The seed stores presence as `value / 250`, so each cell is rounded to the nearest 0.004.
+- in-salah-south is all Google, so TEMPO's false positives there are not shown.
+- The cells with no source in Korgalzhyn and Lairg are exactly the cells where task 01 found no TEMPO tile.
+- Ti Tree is 0.0007 km² lower. All of it is in 16 cells of column 108, beside the zoom 11 TEMPO tile seam at column 109: the sprout averages both tiles there and task 01 took one (see the Kansas seam above). The 75 cells that round to 0 hold under 0.0001 km².
+- Lairg is 0.0004 km² higher. Task 01 saw no seed outside its box, and the sprout does, so it keeps 77 more cells (0.0005 km²).
