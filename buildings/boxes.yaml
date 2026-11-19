@@ -36,6 +36,15 @@ boxes:
   - {name: ti-tree, kind: sparse, lat: -22.13, lon: 133.42, size_km: 6, label: "Ti Tree and stations, Northern Territory, Australia"}
   - {name: korgalzhyn, kind: sparse, lat: 50.58, lon: 70.01, size_km: 6, label: "Korgalzhyn, steppe village, Kazakhstan"}
   - {name: lairg, kind: sparse, lat: 58.03, lon: -4.42, size_km: 6, label: "Lairg and crofts, Scottish Highlands"}
+# Tile sample windows (task 04): 1° x 1° centred on lat, lon. buildings/tiles.py reads the sprout under
+# every zoom 11 tile that meets the window. box names the comparison box inside it, if any.
+  - {name: kongoussi-window, kind: window, lat: 13.326, lon: -1.533, size_deg: 1, box: kongoussi, label: "Rural Sahel village, Burkina Faso"}
+  - {name: bria-window, kind: window, lat: 6.537, lon: 21.987, size_deg: 1, box: bria, label: "Bria, Central African Republic"}
+  - {name: kocho-window, kind: window, lat: 6.30532, lon: 23.859, size_deg: 1, label: "Kocho, Central African Republic"}
+  - {name: mueda-window, kind: window, lat: -11.660, lon: 39.546, size_deg: 1, box: mueda, label: "Mueda, Mozambique"}
+  - {name: saint-flour-window, kind: window, lat: 45.034, lon: 3.093, size_deg: 1, box: saint-flour, label: "Saint-Flour, France (TEMPO)"}
+  - {name: rebiana-window, kind: window, lat: 24.2, lon: 22.0, size_deg: 1, label: "Rebiana sand sea, Libya: empty desert, TEMPO only"}
+  - {name: edge-window, kind: window, lat: 27.5, lon: 9.8, size_deg: 1, label: "Google's edge on the Algeria-Libya border"}
 # Google cut test (task 03b): presence below 0.2 set to 0 before the mean into sprout cells, exported from Earth Engine.
   - {name: kocho-cut, kind: cut-test, lat: 6.30532, lon: 23.859, size_km: 10, label: "Kocho, Chinko, Central African Republic: seed v1 speckle"}
   - {name: bria-cut, kind: cut-test, lat: 6.537, lon: 21.987, size_km: 10, label: "Bria, Central African Republic"}

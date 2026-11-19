@@ -532,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd in ("box", "all"):
         boxes = load_boxes()
         names = args.names if args.cmd == "box" else [
-            n for n, x in boxes.items() if x["kind"] != "cut-test" and (not args.kind or x["kind"] == args.kind)]
+            n for n, x in boxes.items() if x["kind"] not in ("window", "cut-test") and (not args.kind or x["kind"] == args.kind)]
         overview = getattr(args, "overview", None)
         for name in names:
             run_box(boxes[name], overview=overview)

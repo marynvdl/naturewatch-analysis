@@ -192,8 +192,11 @@ def test_the_buildings_recipe_names_both_sources_and_the_merge():
     assert recipe["sprout"]["tempo"]["seed_share"] > 0
     assert recipe["sources"]["tempo"]["tile_count"] == 822199
     assert recipe["sources"]["google"]["tile_count"] == 627480
-    assert recipe["tiles"]["path"] == "gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles"
-    assert "max_zoom" not in recipe["tiles"]
+    tiles = recipe["tiles"]
+    assert tiles["path"] == "gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles"
+    assert (tiles["tile_size"], tiles["min_zoom"], tiles["max_zoom"], tiles["top_rule"]) == (512, 0, 12, "graded")
+    assert (tiles["share_full"], tiles["parent"], tiles["empty"]) == (0.25, "mean", "drop")
+    assert tiles["google_speckle"] == {"floor": 0.012, "seed_share": 0.15, "seed_radius_cells": 72}
 
 
 def test_the_roads_recipe_names_the_release_levels_and_tiles():

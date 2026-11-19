@@ -116,5 +116,17 @@ tiles:
   resampling: share
   share_steps: 7
   share_curve: sqrt
-  # Task 04 chooses max_zoom, the top-zoom rule, and how a parent tile combines its children
-  # (share-weighted mean as cropland, or max so lone buildings stay visible zoomed out).
+  # Chosen in the task 04 sample, approved by the user on 19 November 2026 (buildings/README.md, "Tile sample").
+  min_zoom: 0
+  max_zoom: 12  # the first zoom finer than the 28 m sprout cell
+  top_rule: graded  # the top zoom is shaded as below it; a solid rule at 0.5 kept 0-8% of the built area
+  share_full: 0.25  # the share drawn with the darkest shade, as roads
+  parent: mean  # a parent's share is the mean of its four children, absent children as 0
+  empty: drop  # a tile with no building is not stored
+  # Seed v1's Google mean presence leaves faint speckle on empty land. On Google cells only (source 1),
+  # before the top zoom is warped: a cell below the floor is 0, and a cell is 0 unless a Google cell
+  # within seed_radius_cells (2 km) reaches seed_share. buildings/tiles.py speckle_rule.
+  google_speckle:
+    floor: 0.012
+    seed_share: 0.15
+    seed_radius_cells: 72
