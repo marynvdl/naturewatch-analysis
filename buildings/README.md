@@ -179,3 +179,75 @@ EPSG:4326 at 0.00025°, the cropland grid. A cell is about 730–755 m² in thes
 ## Cost of this step
 
 No transfer, export task or Batch job. Earth Engine: about 150 `computePixels` requests (two 0.5 m passes over Kongoussi in 48 × 48 cell pieces, then whole-box requests) and about 25 profiled `getInfo` requests, on the noncommercial project. Laptop: about 55 box runs of up to 2 minutes, peak resident memory 2.0 GB. Cached arrays in `data/buildings/` are local only.
+
+## Google cut test (task 03b)
+
+Seed v1 shows faint speckle in the bush around Kocho. Google's explorer draws presence only from 0.2. This test sets presence below 0.2 to 0 before the mean into sprout cells, in Earth Engine, with the cut made on 0.5 m, 2 m and 4 m pixels. The boxes are `kocho-cut`, `bria-cut` and `yalinga-cut` in `boxes.yaml`, each 10 × 10 km.
+
+The project's Earth Engine allowance is 540,000 EECU-seconds a month (150 EECU-hours, the Community tier), read from Service Usage on 19 November 2026.
+
+### Exports, submitted 19 November 2026
+
+Nine exports, approved by the user, expected under 1 EECU-hour in all. The task ids are in `data/buildings/cut-test/exports.json` (local).
+
+| Box | 0.5 m | 2 m | 4 m |
+| --- | --- | --- | --- |
+| kocho-cut | B67TCPVWEJWUXQZXBHLQVSII | UY7TXOI67OWIVDTLQYGUTFXQ | VNVBAHPWPLEZ54CAIX7PLWSG |
+| bria-cut | IYDRCLGYBNOVTO6DRBQEJFDY | WD7WB5WQBQ7ZTPXCDJ3OHURX | HO2GYPVDYTOJTFCCRJC4UE44 |
+| yalinga-cut | 55ILXT6HEJUQVYBAM5IIZR5P | JXYKOMAHP6U7YP4PC4KCKXWO | CBJLK44JEAQRMNJJVZ2J6G7Y |
+
+- Output: `gs://nature-watch-bucket/scratch/buildings/google-cut-test/<box>-cut0.2-<scale>m.tif`, deleted once the figures are recorded.
+- Status and EECU: `python buildings/ee_box.py --status`.
+- Cancel: `earthengine --project nature-watch-387210 task cancel <task id>`.
+- Then: `python buildings/cut_test.py fetch` and `python buildings/cut_test.py report`.
+
+### Results
+
+The three 0.5 m exports failed: "Reprojection output too large (about 14,200 × 14,200 pixels)". Earth Engine will not cut a 10 km box at 0.5 m in one export, so a 0.5 m seed would need thousands of small exports. The 0.5 m column below is the same cut read from Google's COGs on the laptop (`cut_test.py read`, 8.4 minutes, 2.2 GB peak memory for the three boxes). That read is exact.
+
+Google cells only. Speckle is a seed v1 cell above 0 with no Overture outline in it.
+
+| Box | Layer | Built km² | Cells above 0 | v1 speckle left | EECU-seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Kocho | seed v1 | 0.0102 | 268 | 187 | |
+| Kocho | cut, 0.5 m (COGs) | 0.0096 | 131 | 19 | |
+| Kocho | cut, 2 m | 0.0096 | 120 | 16 | 30.4 |
+| Kocho | cut, 4 m | 0.0094 | 119 | 16 | 8.4 |
+| Yalinga | seed v1 | 0.0130 | 386 | 128 | |
+| Yalinga | cut, 0.5 m (COGs) | 0.0098 | 379 | 44 | |
+| Yalinga | cut, 2 m | 0.0095 | 331 | 30 | 46.5 |
+| Yalinga | cut, 4 m | 0.0090 | 326 | 24 | 8.1 |
+| Bria | seed v1 | 0.9181 | 11,134 | 2,713 | |
+| Bria | cut, 0.5 m (COGs) | 0.7022 | 10,500 | 1,340 | |
+| Bria | cut, 2 m | 0.6886 | 9,920 | 1,185 | 30.2 |
+| Bria | cut, 4 m | 0.6787 | 9,846 | 1,155 | 8.6 |
+
+Overture has 0.0122 km² at Kocho, 0.0238 at Yalinga and 0.9503 at Bria. Counting pixels at 0.2 or more instead of keeping their values gives 0.0141, 0.0205 and 1.4829 km².
+
+- The cut removes 90% of the Kocho speckle. In Esri imagery, most of the cells left with no Overture outline sit beside a roof at Kocho camp or inside the villages at Yalinga and Bria: the buildings are real, and Overture has no outline in that cell. A few lone cells at 0.004–0.016 remain in the bush.
+- The 4 m cut is within 3–8% of the 0.5 m built area and keeps 86–94% of its cells. The 2 m cut is no closer, at 3.6–5.7 times the cost.
+- Lone Overture outlines (none within 100 m) are not a usable check here: seed v1 keeps only 0–22% of them, and in Chinko they are termite mounds and bright patches.
+
+Global cost, from EECU-seconds per km² of each box over Google's 75.3 million km²:
+
+| Cut made on | EECU-seconds per km² | Global EECU-hours | Months of the 150 EECU-hour allowance |
+| --- | ---: | ---: | ---: |
+| 4 m | 0.081–0.086 | 1,700–1,800 | 11–12 |
+| 2 m | 0.30–0.46 | 6,300–9,700 | 42–65 |
+| 0.5 m | not possible in one export per box | 100,000–171,000 (task 01) | 670+ |
+
+The six exports used 132 EECU-seconds; the three failed exports report none. The 44 KB of outputs in the scratch folder were deleted on 19 November 2026.
+
+### Decision, 19 November 2026
+
+The user chose not to make seed v2: a global cut costs 11–12 months of the allowance at 4 m, and a higher tier or a Batch run is too expensive for now. Seed v1 stays. The speckle is thinned when the tiles are built (task 04), and these boxes calibrate that rule. Speckle below is a seed v1 cell above 0 that the exact 0.5 m cut empties.
+
+| Rule on seed v1 | Speckle removed | Real built km² kept | Real cells kept |
+| --- | --- | --- | --- |
+| Floor 2 of 250 (0.008) | 53–75% | 99–100% | 83–95% |
+| Floor 3 of 250 (0.012) | 70–88% | 97–99% | 73–88% |
+| Floor 4 of 250 (0.016) | 80–95% | 96–99% | 66–84% |
+| Floor 6 of 250 (0.024) | 89–98% | 94–98% | 59–78% |
+| A Google cell within 2 km reaches 0.15 | 32–60% at Kocho and Yalinga, 4% at Bria | 95–100% | |
+
+The floor thins the noise around villages. The seed rule clears empty bush, where the boxes hold little speckle but the 1° Kocho window holds about 20,000 cells.
