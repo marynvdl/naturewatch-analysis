@@ -460,4 +460,13 @@ python buildings/batch.py submit merge --approved               # after every sh
 - output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/5-15-14.pmtiles`, `.root.npz` and `.json`; the full run skips this shard
 - status: `gcloud batch jobs describe buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
-- result: pending
+- result: succeeded, run duration 1,052 s. 11,017 tiles (7,901 at zoom 12 of the 16,384 possible; 5 to 12: 1, 4, 16, 51, 177, 624, 2,243, 7,901), 43,928,046 bytes, 4.0 KB a tile, and a 2,097,906 byte root. 1,042 s in the shard, of which 3.2 s copying the six blocks; peak memory 0.53 GB.
+
+**Revised cost, from the pilot.** For approval before the full jobs. The block records give each block's valid and built cells. Spread evenly over a block, they put about 15,900 valid zoom 12 tiles (land or Google's coverage, which includes some sea) and 16 million built cells in the pilot shard. Over the 557 shards they give 3.19 million valid zoom 12 tiles, 201 times the pilot, and 5.46 billion built cells, 341 times.
+
+| Job | Work | Machine and time | Compute | Stored |
+| --- | --- | --- | --- | --- |
+| Shards | 556 more shards. A valid tile is read and warped whether or not it has a building, so time scales with valid tiles: 58 task-hours at the pilot's 0.066 s a valid tile, 45–80 with denser or sparser shards. The longest shard is about 18 minutes | spot `e2-standard-2`, 30 GB `pd-standard`, 12 at a time, about 4–7 hours of wall time | about $1.2–2.8, plus about $0.10 of disk | 6–15 GB of shards in scratch until the merge deletes them |
+| Merge | fetch the shards and roots, write the archive, rebuild 16 zoom 8 subtrees from the sprout VRT, upload | one spot `e2-standard-4`, 150 GB `pd-standard`, about 1–2 hours | about $0.15–0.30 | the archive: 6–15 GB, $0.12–0.30 a month |
+
+Bytes scale with built cells: the pilot stored 2.7 bytes a sprout built cell, and the task 04 windows 1.0–2.0, where TEMPO's dense towns pack better than Sahel villages. That gives 2.2–3.8 million tiles and 6–15 GB, against the task 04 estimate of 10–25 GB. About $1.4–3.2 in all, inside the task 04 estimate of $1.5–3.8. Reads of the sprout and the shards inside `europe-west1` are free.
