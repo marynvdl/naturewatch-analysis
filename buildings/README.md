@@ -1,6 +1,6 @@
-# buildings: comparison boxes for the Buildings 2023 layer
+# buildings: comparison boxes and the tile sample for the Buildings 2023 layer
 
-Scripts that read Google Open Buildings 2.5D Temporal, Microsoft TEMPO and Overture building outlines in small boxes, on the sprout grid. They informed the values in [`cookbook/recipes/buildings-2023-v1.yaml`](../cookbook/recipes/buildings-2023-v1.yaml), and task 03 uses them again to check the sprout. The parcel is `docs/parcels/buildings-2023.md` in naturewatch-app.
+Scripts that read Google Open Buildings 2.5D Temporal, Microsoft TEMPO and Overture building outlines in small boxes, on the sprout grid. They informed the values in [`cookbook/recipes/buildings-2023-v1.yaml`](../cookbook/recipes/buildings-2023-v1.yaml), and task 03 uses them again to check the sprout. `tiles.py` builds the share pyramid on small windows of the published sprout (task 04, [Tile sample](#tile-sample-task-04)). The parcel is `docs/parcels/buildings-2023.md` in naturewatch-app.
 
 Nothing here writes to the cloud. Reads are public and box sized: a 5 or 6 km box reads a few tens of MB from Google.
 
@@ -251,3 +251,158 @@ The user chose not to make seed v2: a global cut costs 11–12 months of the all
 | A Google cell within 2 km reaches 0.15 | 32–60% at Kocho and Yalinga, 4% at Bria | 95–100% | |
 
 The floor thins the noise around villages. The seed rule clears empty bush, where the boxes hold little speckle but the 1° Kocho window holds about 20,000 cells.
+
+## Tile sample (task 04)
+
+`tiles.py` cuts seven 1° windows from the published sprout VRT and builds the share pyramid on each under several settings, on the laptop. `preview.py` shows the archives on a Mapbox map with the app's share paint.
+
+```bash
+python buildings/tiles.py fetch                     # data/buildings/tiles/sprout/<window>.tif, read with the gcloud account's token
+python buildings/tiles.py sample                    # the baseline and each variant, every window
+python buildings/tiles.py window kongoussi-window --top-zoom 12 --top-rule graded --full 0.25 --floor 0.01 --empty drop
+python buildings/tiles.py compare                   # the tables below, from data/buildings/tiles/*.json
+python roads/render.py tiles data/buildings/tiles/<archive>.pmtiles --zoom 8 --bbox W S E N --out data/buildings/renders/<name>.png
+MAPBOX_ACCESS_TOKEN=pk... python buildings/preview.py   # http://127.0.0.1:8765/preview.html
+python -m pytest buildings
+```
+
+**Method.** A window reads the sprout under every zoom 11 tile (512 px) that meets it, with 2 cells more on each side, so every top-zoom tile is whole. The top zoom is warped from the window to Web Mercator with `average`: the share with nodata read as 0, and a valid mask beside it. So a pixel's share is the built fraction of the whole pixel and the built area is kept; a pixel is nodata only where no cell under it has a source. Lower zooms are reduced from four children. Tiles are 4-bit palette PNGs in the cropland version 3 layout: index 0 is nodata, index k + 1 is shade k of 7, red = 255 × (k / 7)². With `full` 1 and the 0.5 solid rule the tiles are byte for byte what `tiles/transcode.py share_palette_from_gray` writes (`test_tile_sample.py`). Shade k is round(√(share / `full`) × 7), and any share above 0 keeps shade 1.
+
+**Windows** (`boxes.yaml`, kind `window`):
+
+| Window | Centre | Source | What it tests |
+| --- | --- | --- | --- |
+| kongoussi | 13.326 N, 1.533 W | Google | a rural Sahel town and its villages |
+| bria | 6.537 N, 21.987 E | Google | a town in forest and savanna |
+| kocho | 6.30532 N, 23.859 E | Google | a remote village with an airstrip |
+| mueda | 11.660 S, 39.546 E | Google | a plateau town and scattered villages |
+| saint-flour | 45.034 N, 3.093 E | TEMPO | rural France |
+| rebiana | 24.2 N, 22.0 E | TEMPO | empty desert beyond Google's edge |
+| edge | 27.5 N, 9.8 E | both | Google's edge on the Algeria–Libya border, at 9.67–9.91° E in the window |
+
+**Settings.** The baseline is cropland's: top zoom 11, solid from share 0.5, `full` 1, mean parent, every tile with a valid cell stored (`keep`), no floor. Each variant changes one setting.
+
+### Built area against the sprout
+
+At the top zoom, the share summed over the tiles against the sprout under the same tiles, edge cells weighted by overlap. The box columns are the task 03 check boxes, read from the window cut and from the top-zoom tiles.
+
+| Window | Sprout km² | Tiles km² at z11, z12, z13 | Box | Box km², sprout (task 03) | Box km², z11 tiles |
+| --- | ---: | --- | --- | ---: | ---: |
+| kongoussi | 36.3186 | 36.3186, 36.3186, 36.3186 | kongoussi | 1.3035 | 1.3036 |
+| bria | 1.6340 | 1.6340, 1.6340, 1.6340 | bria | 0.7953 | 0.7949 |
+| kocho | 0.1116 | 0.1116, 0.1116, 0.1116 | | | |
+| mueda | 9.6059 | 9.6059, 9.6059, 9.6059 | mueda | 0.9519 | 0.9521 |
+| saint-flour | 51.5937 | 51.5937, 51.5937, 51.5937 | saint-flour | 0.6780 | 0.6779 |
+| rebiana | 0 | 0, 0, 0 | | | |
+| edge | 1.3858 | 1.3858, 1.3858, 1.3858 | | | |
+
+The box figures read from the windows are the task 03 figures. The tiles keep the area at every top zoom. A box's tile figure differs from the sprout by up to 0.0004 km², from pixels that straddle the box edge.
+
+Rebiana has no building cell: TEMPO's noise there is removed by the sprout's seed rule. At the edge, Google holds 18,959 built cells and TEMPO 511.
+
+### Top-zoom rule
+
+Share of the built area in pixels drawn solid, and the area painted, at top zoom 11:
+
+| Window | Built km² | ≥ 0.5 | ≥ 0.25 | ≥ 0.1 | ≥ 0.05 |
+| --- | ---: | --- | --- | --- | --- |
+| kongoussi | 36.32 | 0%, 0.14 km² | 11%, 12.5 km² | 55%, 119 km² | 79%, 237 km² |
+| bria | 1.63 | 0%, 0.01 km² | 17%, 0.84 km² | 49%, 4.3 km² | 70%, 9.1 km² |
+| kocho | 0.11 | 0%, 0 | 3%, 0.01 km² | 8%, 0.05 km² | 14%, 0.15 km² |
+| mueda | 9.61 | 0%, 0.02 km² | 2%, 0.77 km² | 35%, 23.6 km² | 68%, 67.7 km² |
+| saint-flour | 51.59 | 1%, 1.2 km² | 16%, 24.2 km² | 58%, 169 km² | 80%, 323 km² |
+| edge | 1.39 | 8%, 0.20 km² | 46%, 1.7 km² | 79%, 4.5 km² | 89%, 6.5 km² |
+
+Cropland's solid rule (0.5) erases the layer at the top zoom: a 38 m pixel is rarely half covered by buildings. A threshold low enough to keep most buildings paints 5–7 times their area. A graded top zoom keeps every building at its share, for about twice the bytes of a solid one (Kongoussi 847,115 against 345,970).
+
+### Top zoom
+
+A 512 px tile at zoom 11 is 38 m a pixel at the equator, 12 at 19 m and 13 at 9.5 m. The sprout cell is 28 m.
+
+| Window | z11 tiles, bytes | z12 tiles, bytes | z12 ÷ z11 | Wall s, z11 and z12 |
+| --- | --- | --- | ---: | --- |
+| kongoussi | 79, 794,884 | 275, 2,011,832 | 2.53 | 3.2, 7.9 |
+| bria | 70, 119,482 | 232, 302,867 | 2.53 | 1.8, 4.7 |
+| kocho | 72, 69,128 | 234, 193,403 | 2.80 | 1.7, 4.3 |
+| mueda | 79, 278,612 | 245, 735,933 | 2.64 | 2.1, 5.2 |
+| saint-flour | 108, 1,156,530 | 360, 2,718,975 | 2.35 | 3.6, 9.1 |
+| edge | 67, 68,798 | 172, 171,805 | 2.50 | 2.1, 5.5 |
+
+These are the recommended settings below (graded, `full` 0.25, mean, floor 0.01, `drop`); Rebiana stores no tile. Zoom 13 is 4–6 times zoom 11's bytes on the baseline settings.
+
+Renders of Kongoussi town at each top zoom (`kongoussi-top-z11.png`, `-z12`, `-z13` in `data/buildings/renders/`): zoom 11 draws the town as one blurred mass, because its pixel is coarser than the sprout cell. Zoom 12 shows the street grid, the open ground between quarters and single compounds at the edge. Zoom 13 only redraws the same 28 m cells more sharply.
+
+### Shade curve and parent rule
+
+Built pixels in shades 1–7, and the share in the two faintest, on the baseline settings except as named:
+
+| Window, zoom | `full` 1 | `full` 0.25 | `full` 0.1 | max parent |
+| --- | --- | --- | --- | --- |
+| kongoussi, 8 | 70,003; 1,375; 326; 14; 0; 0; 0 (100%) | 62,977; 6,011; 1,587; 619; 338; 149; 37 (96%) | 53,988; 9,870; 4,242; 1,655; 802; 464; 697 (89%) | 44,176; 15,086; 10,155; 2,010; 283; 8; 0 (83%) |
+| kongoussi, 10 | 97% | 81% | 67% | 89% |
+| mueda, 10 | 99% | 83% | 71% | 94% |
+| saint-flour, 4 | 1,004; 3; 0; 0; 0; 0; 0 (100%) | 953; 44; 9; 1; 0; 0; 0 (99%) | 745; 223; 26; 9; 3; 1; 0 (96%) | 11; 19; 120; 592; 236; 26; 3 (3%) |
+| saint-flour, 10 | 93% | 75% | 63% | 91% |
+| edge, 10 | 94% | 86% | 82% | 89% |
+
+Buildings cover a small share of a pixel: at top zoom 11, 0–8% of the built area is in pixels at 0.5 or more, and 2–46% at 0.25 or more (table above). With `full` 1, nearly every built pixel is the faintest shade at every zoom, so towns and lone compounds look alike. `full` 0.25 (the roads value) spreads villages over the shades at zooms 8–11, and a town core reaches the darkest. `full` 0.1 makes 12% of Saint-Flour's zoom 10 pixels the darkest shade and flattens the town. The max parent darkens coarse zooms: at zoom 4, 97% of Saint-Flour's built pixels are shade 3 or darker, so rural France would read as dense as a town centre. The mean parent keeps the built area at every zoom, and lone buildings still show at zoom 4 because any share keeps shade 1. The `full` settings cost 5–20% more bytes; max 4–10%.
+
+### Google's faint cells, and a floor
+
+The Kocho render at the top zoom shows the village and airstrip, and single faint pixels scattered across the savanna. They are Google's mean presence at 1 or 2 of 250 (share 0.004 or 0.008, 3–6 m² in a 28 m cell), smaller than a hut. 75% of Kocho's built cells are 1, and 97% are 5 or less. The Algerian side of the edge window shows the same speckle at zoom 8. TEMPO's noise is removed in the sprout by the seed rule; Google's is not, and `any share keeps shade 1` draws it as a faint haze at every zoom.
+
+A floor reads a sprout cell below it as 0 when the tiles are built. The sprout is not changed.
+
+| Window | Built km² kept, floor 0.01 | floor 0.02 | Zoom 8 built pixels: none, 0.01, 0.02 |
+| --- | ---: | ---: | --- |
+| kongoussi | 98.2% | 96.8% | 71,718; 48,680; 43,679 |
+| bria | 94.9% | 92.1% | 17,685; 6,133; 4,378 |
+| kocho | 42.9% | 31.0% | 17,717; 2,000; 675 |
+| mueda | 97.0% | 94.5% | 33,334; 16,050; 12,738 |
+| saint-flour | 97.8% | 95.3% | 83,612; 67,600; 60,039 |
+| edge | 98.2% | 96.9% | 5,628; 1,741; 1,206 |
+
+At floor 0.01, the Kocho speckle is gone and the village is whole (`kocho-top-z11-floor0.01.png`). In the towns it removes 2–5% of the built area, from cells at the fringe of real buildings. 0.02 removes half as much again for little visible gain.
+
+### Empty land
+
+`keep` and `drop` differ by under 1% in bytes in every window. PMTiles stores one copy of the all-empty tile, and almost every inhabited tile has a building. `drop` stores 0 of Rebiana's 77 tiles and 67 of the edge window's 96. The map draws nodata and share 0 the same, and the parcel names no use for the difference.
+
+### The edge
+
+With the recommended settings, the edge window at zoom 8 (`edge-z8-recommended.png`) shows no line where Google meets TEMPO, at 9.67–9.91° E, and no haze on either side. The TEMPO side holds 0.0155 km² of buildings in 511 cells, and the Google side 1.55 km².
+
+### Recommendation
+
+| Choice | Recommended | Why |
+| --- | --- | --- |
+| Top zoom | **12** | The first zoom finer than the 28 m sprout cell. It shows compounds and streets that zoom 11 blurs. 2.4–2.8 times zoom 11's bytes |
+| Top-zoom rule | **graded** | Solid at 0.5 keeps 0–8% of the built area; lower thresholds paint several times the built area |
+| `full` | **0.25** | The roads value. Spreads villages and towns over the shades; 0.1 flattens town centres |
+| Parent | **mean** | Keeps the built area at every zoom; max makes coarse zooms read as dense |
+| Empty tiles | **drop** | The same bytes, fewer tiles, as roads. Nothing reads the difference |
+| Floor | **0.01** | Removes Google's sub-hut cells, the haze at every zoom, for 2–5% of a town's built area. A new setting: the parcel did not name it |
+
+Paint is task 06's. The preview's faintest opacity can be set to 0.2 (cropland) or 0.05 (roads).
+
+### Global estimate
+
+Assumptions: about 0.9–1.0 million zoom 11 tiles of land with a source, as cropland v3 has 1.28 million tiles at zooms 0–11 over land. The sprout has 5.46 billion cells above 0 (1.40 Google, 4.06 TEMPO, `sprout/README.md`), and the floor removes 25–40% of them (Kongoussi 29%, Saint-Flour 25%, Kocho 89%), leaving 3.3–4.1 billion. With the recommended settings at zoom 11 the windows store 1.0 (Saint-Flour) to 2.0 (Mueda) bytes a built cell, plus about 1 KB a tile where buildings are sparse.
+
+| | Top zoom 11 | Top zoom 12 |
+| --- | --- | --- |
+| Tiles | 0.6–1.0 million at the top zoom, up to 1.3 million in all | 2.4–4 million at the top zoom, up to 5.3 million in all |
+| Bytes | 4–9 GB | 10–25 GB (2.4–2.8 times zoom 11) |
+| Task hours | 16–40, at 0.06–0.15 s a top-zoom tile as cropland v3 and roads | 40–100, 2.5 times zoom 11 in the windows |
+| Compute | about $0.6–1.5 on spot `e2-standard-2`, plus a merge under $0.20 | about $1.5–3.5, plus a merge under $0.30 |
+| Storage | $0.09–0.21 a month | $0.23–0.58 a month |
+
+Task 05 prices the run from its pilot and asks for approval first.
+
+### Cost of the sample
+
+No compute in the cloud. Reads from the sprout through the VRT: 6,524,064 bytes for the seven windows (Saint-Flour the most, 2.4 MB), inside the free monthly egress, under $0.01. Esri imagery for the renders is public. On the laptop: 137 window archives of 1.6–28 s each, peak resident memory 1.6 GB (the whole sample in one process). The archives and renders are in `data/buildings/tiles/` and `data/buildings/renders/`, not committed. No virtual machine ran.
+
+### Approval
+
+Waiting for the user.

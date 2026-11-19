@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buildings sample preview</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { position: absolute; z-index: 2; left: 8px; top: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+         background: #fffe; padding: 6px 8px; border-radius: 6px; box-shadow: 0 1px 4px #0003; }
+  #map { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <select id="archive"></select>
+  <select id="basemap">
+    <option value="satellite">Satellite (app)</option>
+    <option value="standard">Standard monochrome (app)</option>
+  </select>
+  <label>faintest opacity <select id="floor"><option>0.2</option><option>0.1</option><option>0.05</option></select></label>
+  <span id="windows"></span>
+  <span id="zoom"></span>
+</div>
+<div id="map"></div>
+<script>
+// Painted as the app paints share tiles (catalog/rasterColor.ts shareRasterPaint): shade k of 7 is red 255 × (k/7)²,
+// opacity floor + (0.95 − floor) × k / 7. A `solid` archive draws its top zoom with red 255 solid and red 0 clear.
+// Light grey on satellite, dark grey on the light basemap.
+const C = window.BUILDINGS;
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+};
+const COLOUR = { satellite: [240, 240, 240], standard: [47, 47, 47] };
+const STEPS = 7;
+const rgba = (c, a) => `rgba(${c.join(',')},${a})`;
+const RED = { 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 255], 'raster-fade-duration': 0, 'raster-resampling': 'nearest' };
+
+function gradedPaint(colour, floor) {
+  const expr = ['interpolate', ['linear'], ['raster-value'], 0, rgba(colour, 0)];
+  for (let k = 1; k <= STEPS; k++) expr.push(Math.max(1, Math.round((k / STEPS) ** 2 * 255)), rgba(colour, floor + (0.95 - floor) * k / STEPS));
+  return { ...RED, 'raster-color': expr };
+}
+const solidPaint = colour => ({ ...RED, 'raster-color': ['step', ['raster-value'], rgba(colour, 0), 128, rgba(colour, 1)] });
+const topZoom = name => Number((name.match(/-z(\d+)-/) || [0, 11])[1]);
+const isSolid = name => /-solid[\d.]+-/.test(name);
+
+const P = new URLSearchParams(location.search);
+const archiveSel = document.getElementById('archive');
+for (const a of C.archives) archiveSel.add(new Option(a, a));
+archiveSel.value = P.get('a') || C.archives.find(a => a.startsWith('kongoussi-window-z11-graded')) || C.archives[0];
+const basemapSel = document.getElementById('basemap');
+basemapSel.value = P.get('b') || 'satellite';
+const floorSel = document.getElementById('floor');
+
+const settingsOf = name => name.replace(/^.*?-window-/, '');
+const win = document.getElementById('windows');
+for (const [name, b] of Object.entries(C.windows)) {
+  const btn = document.createElement('button');
+  btn.textContent = name.replace('-window', '');
+  btn.onclick = () => {
+    const same = `${name}-${settingsOf(archiveSel.value)}`;
+    if (!archiveSel.value.startsWith('https://')) {
+      archiveSel.value = C.archives.includes(same) ? same : (C.archives.find(a => a.startsWith(name)) || archiveSel.value);
+      addLayer();
+    }
+    map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 });
+  };
+  win.appendChild(btn);
+}
+
+mapboxgl.accessToken = C.token;
+const map = new mapboxgl.Map({ container: 'map', ...STYLES[basemapSel.value], projection: 'globe', center: [-1.533, 13.326], zoom: 9, hash: true });
+map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+
+function addLayer() {
+  for (const id of ['built-graded', 'built-solid']) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getSource('built')) map.removeSource('built');
+  const name = archiveSel.value;
+  const top = topZoom(name);
+  const url = name.startsWith('https://') ? `${location.origin}/remote/${C.archives.indexOf(name)}/${name.split('/').pop()}` : `${location.origin}/tiles/${name}`;
+  map.addSource('built', { type: 'raster', url, tileSize: 512, maxzoom: top });
+  const colour = COLOUR[basemapSel.value];
+  const graded = gradedPaint(colour, Number(floorSel.value));
+  if (isSolid(name)) {
+    map.addLayer({ id: 'built-graded', type: 'raster', source: 'built', maxzoom: top, paint: graded });
+    map.addLayer({ id: 'built-solid', type: 'raster', source: 'built', minzoom: top, paint: solidPaint(colour) });
+  } else {
+    map.addLayer({ id: 'built-graded', type: 'raster', source: 'built', paint: graded });
+  }
+  showZoom();
+}
+map.on('style.load', addLayer);
+archiveSel.onchange = addLayer;
+floorSel.onchange = addLayer;
+basemapSel.onchange = () => { const s = STYLES[basemapSel.value]; map.setStyle(s.style, s.config ? { config: s.config } : undefined); };
+const zoomEl = document.getElementById('zoom');
+function showZoom() {
+  const name = archiveSel.value;
+  zoomEl.textContent = `zoom ${map.getZoom().toFixed(1)} · archive top ${topZoom(name)}` + (isSolid(name) ? ' (solid from map zoom ' + topZoom(name) + ')' : '');
+}
+map.on('zoom', showZoom);
+</script>
+</body>
+</html>
