@@ -136,3 +136,29 @@ def test_floor_reads_small_cells_as_zero(tmp_path):
 def test_settings_name():
     assert tiles.settings_name(tiles.BASELINE) == "z11-solid0.5-full1-mean-keep"
     assert tiles.settings_name({**tiles.BASELINE, "floor": 0.01}) == "z11-solid0.5-full1-mean-keep-floor0.01"
+
+
+def test_speckle_rule_touches_google_cells_only():
+    share = np.array([[2, 3, 2, 255], [1, 0, 2, 2]], dtype=np.uint8)
+    source = np.array([[1, 1, 2, 0], [1, 1, 2, 2]], dtype=np.uint8)
+    out = tiles.speckle_rule(share, source, floor=0.012)  # 3 of 250
+    assert out.tolist() == [[0, 3, 2, 255], [0, 0, 2, 2]]
+
+
+def test_google_seed_rule_keeps_cells_near_a_strong_google_cell():
+    share = np.zeros((1, 20), dtype=np.uint8)
+    source = np.ones((1, 20), dtype=np.uint8)
+    share[0, 0] = 40  # 0.16, a seed
+    share[0, 3] = 5   # within 4 cells of it
+    share[0, 12] = 5  # too far
+    share[0, 19] = 255  # nodata is not a seed
+    share[0, 18] = 5
+    source[0, 15] = 2
+    share[0, 15] = 200  # a TEMPO cell is not a seed for Google
+    out = tiles.speckle_rule(share, source, seed=0.15, radius=4)
+    assert out[0, [0, 3, 12, 15, 18, 19]].tolist() == [40, 5, 0, 200, 0, 255]
+
+
+def test_settings_name_carries_the_google_rule():
+    name = tiles.settings_name({**tiles.RECOMMENDED, "google_floor": 0.012, "google_seed": 0.15})
+    assert name == "z12-graded-full0.25-mean-drop-gfloor0.012-gseed0.15"

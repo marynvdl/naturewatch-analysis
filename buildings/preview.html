@@ -22,6 +22,14 @@
     <option value="standard">Standard monochrome (app)</option>
   </select>
   <label>faintest opacity <select id="floor"><option>0.2</option><option>0.1</option><option>0.05</option></select></label>
+  <label>Google speckle <select id="speckle">
+    <option value="">none</option>
+    <option value="-floor0.01">floor 0.01, all cells</option>
+    <option value="-gfloor0.008-gseed0.15">floor 0.008 + seed</option>
+    <option value="-gfloor0.012">floor 0.012</option>
+    <option value="-gfloor0.012-gseed0.15">floor 0.012 + seed</option>
+    <option value="-gfloor0.016-gseed0.15">floor 0.016 + seed</option>
+  </select></label>
   <span id="windows"></span>
   <span id="zoom"></span>
 </div>
@@ -58,6 +66,14 @@ basemapSel.value = P.get('b') || 'satellite';
 const floorSel = document.getElementById('floor');
 
 const settingsOf = name => name.replace(/^.*?-window-/, '');
+// The Google speckle rule is the end of an archive name: -floor<f>, -gfloor<f>, -gseed<s>.
+const SPECKLE = /(-floor[\d.]+)?(-gfloor[\d.]+)?(-gseed[\d.]+)?$/;
+const speckleSel = document.getElementById('speckle');
+speckleSel.onchange = () => {
+  const name = archiveSel.value.replace(SPECKLE, '') + speckleSel.value;
+  if (C.archives.includes(name)) { archiveSel.value = name; addLayer(); }
+  else alert(`No archive ${name}`);
+};
 const win = document.getElementById('windows');
 for (const [name, b] of Object.entries(C.windows)) {
   const btn = document.createElement('button');

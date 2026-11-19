@@ -381,9 +381,37 @@ With the recommended settings, the edge window at zoom 8 (`edge-z8-recommended.p
 | `full` | **0.25** | The roads value. Spreads villages and towns over the shades; 0.1 flattens town centres |
 | Parent | **mean** | Keeps the built area at every zoom; max makes coarse zooms read as dense |
 | Empty tiles | **drop** | The same bytes, fewer tiles, as roads. Nothing reads the difference |
-| Floor | **0.01** | Removes Google's sub-hut cells, the haze at every zoom, for 2–5% of a town's built area. A new setting: the parcel did not name it |
+| Google speckle | **floor 0.012 and seed 0.15 within 2 km, Google cells only** | See "Google speckle, resumed" below. Replaces the floor of 0.01 on every cell |
 
 Paint is task 06's. The preview's faintest opacity can be set to 0.2 (cropland) or 0.05 (roads).
+
+### Google speckle, resumed 19 November 2026
+
+The sample was paused for task 03b, which found a cut of Google presence in Earth Engine too costly. The tiles thin seed v1's speckle instead, with `speckle_rule` on the window cut before the top zoom is warped. It touches Google cells only (source 1), because TEMPO cells already passed the sprout's seed rule:
+
+- floor: a Google cell below the floor is 0;
+- seed: a Google cell is 0 unless a Google cell within 72 cells (2 km) reaches 0.15, the sprout's TEMPO rule.
+
+`fetch` now reads 72 more cells around each window, so the seed sees the full 2 km at the window's edge. The five windows read 4.0 MB from the bucket. `tiles.py speckle` builds the recommended settings with each rule.
+
+| Window | Rule | Cells above 0 in the window | Built km² kept |
+| --- | --- | ---: | ---: |
+| Kocho | none | 17,027 | 0.112 (100%) |
+| Kocho | floor 0.012 | 1,619 | 43% |
+| Kocho | floor 0.012 + seed | 108 | 20% |
+| Bria | none | 40,342 | 1.634 (100%) |
+| Bria | floor 0.012 | 21,828 | 95% |
+| Bria | floor 0.012 + seed | 20,088 | 92% |
+| Kongoussi | none | 420,853 | 36.32 (100%) |
+| Kongoussi | floor 0.012 + seed | 305,554 | 98% |
+| Mueda | none | 169,032 | 9.606 (100%) |
+| Mueda | floor 0.012 + seed | 110,064 | 96% |
+| Edge | none | 3,422 | 1.386 (100%) |
+| Edge | floor 0.012 + seed | 893 | 97% |
+
+Floors of 0.008 and 0.016 with the seed keep 1–3 points more or less of the built area; the archives are in the preview. At Kocho, almost everything removed is the faint speckle on the bush, and the camp stays (`renders/kocho-speckle-pair.png`). At Bria, the speckle in the south-western bush goes, and the town and roadside villages stay (`renders/bria-speckle-pair.png`). Against the exact cut in task 03b, a floor of 0.012 keeps 97–99% of real built area in the 10 km boxes, so most of what it removes in the windows is speckle.
+
+The sprout keeps the speckle. A stats run applies the same rule (parcel, Left for later).
 
 ### Global estimate
 

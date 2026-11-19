@@ -4,6 +4,7 @@
   python buildings/tiles.py fetch [name ...]        cut each window from the published sprout VRT
   python buildings/tiles.py window <name> [flags]   one archive: data/buildings/tiles/<name>-<settings>.pmtiles
   python buildings/tiles.py sample [name ...]       the baseline and every variant, for every window
+  python buildings/tiles.py speckle [name ...]      the recommended settings with each Google speckle rule
   python buildings/tiles.py compare                 the comparison tables, from the records and archives
 
 A tile is a 512 px palette PNG, laid out as cropland version 3 (tiles/transcode.py share_palette_from_gray):
@@ -22,6 +23,10 @@ The settings a sample compares, each a flag:
                     `drop`: a tile with no building is not stored, as roads.
   --floor           a sprout cell whose share is below it is read as 0. 0 keeps every cell. Google's mean presence
                     leaves cells of 1 or 2 (of 250) on empty land, 3–6 m² in a 28 m cell, smaller than a hut.
+  --google-floor    as --floor, on Google cells only (source 1). TEMPO cells already passed the sprout's seed rule.
+  --google-seed     a Google cell is kept only if a Google cell within SEED_RADIUS cells (2 km) reaches this share.
+                    It clears Google's speckle on empty bush. 0 turns it off. Both run on the window cut, before
+                    the top zoom is warped, so `fetch` reads SEED_RADIUS more cells around each window.
 
 The top zoom is warped from the sprout with `average`, the share with nodata as 0 and a valid mask beside it,
 so the share is the built fraction of the whole pixel and the area is kept. A pixel is nodata when no cell
@@ -61,6 +66,8 @@ DATA = compare.CACHE / "tiles"
 SIZE = 512
 STEPS = 7
 MARGIN = 2  # sprout cells read around a top-zoom tile
+SEED_RADIUS = 72  # sprout cells, about 2 km: the sprout's TEMPO seed rule radius
+SOURCE_GOOGLE = 1
 FETCH_ZOOM = 11  # a window reads the sprout under every tile at this zoom that meets it
 SHARE_SCALE = 250
 SHARE_NODATA = 255
@@ -69,6 +76,16 @@ SHADE_ZOOMS = (4, 6, 8, 10)
 THRESHOLDS = (0.5, 0.25, 0.1, 0.05)
 
 BASELINE = {"top_zoom": 11, "top_rule": "solid0.5", "full": 1.0, "parent": "mean", "empty": "keep", "floor": 0.0}
+# The settings recommended before the pause, and the Google speckle rules compared on them (resumed 19 November 2026).
+RECOMMENDED = {"top_zoom": 12, "top_rule": "graded", "full": 0.25, "parent": "mean", "empty": "drop", "floor": 0.0}
+SPECKLE_VARIANTS = [
+    {},
+    {"floor": 0.01},
+    {"google_floor": 0.008, "google_seed": 0.15},
+    {"google_floor": 0.012},
+    {"google_floor": 0.012, "google_seed": 0.15},
+    {"google_floor": 0.016, "google_seed": 0.15},
+]
 VARIANTS = [
     {"top_zoom": 12},
     {"top_zoom": 13},
@@ -110,10 +127,11 @@ def fetch_grid(box: dict) -> compare.Grid:
     xs, ys = [x for x, _ in tiles], [y for _, y in tiles]
     west, _, _, north = tile_bounds_deg(FETCH_ZOOM, min(xs), min(ys))
     _, south, east, _ = tile_bounds_deg(FETCH_ZOOM, max(xs), max(ys))
-    col0 = math.floor((west + 180) / compare.CELL) - MARGIN
-    col1 = math.ceil((east + 180) / compare.CELL) + MARGIN
-    row0 = math.floor((90 - north) / compare.CELL) - MARGIN
-    row1 = math.ceil((90 - south) / compare.CELL) + MARGIN
+    margin = MARGIN + SEED_RADIUS
+    col0 = math.floor((west + 180) / compare.CELL) - margin
+    col1 = math.ceil((east + 180) / compare.CELL) + margin
+    row0 = math.floor((90 - north) / compare.CELL) - margin
+    row1 = math.ceil((90 - south) / compare.CELL) + margin
     return compare.Grid(col0, row0, col1 - col0, row1 - row0)
 
 
@@ -206,6 +224,38 @@ def km2_in(tile: Tile, x: int, y: int, bounds) -> float:
 
 
 # ---- the layer ------------------------------------------------------------------------------
+
+
+def speckle_rule(share: np.ndarray, source: np.ndarray, floor: float = 0.0, seed: float = 0.0,
+                 radius: int = SEED_RADIUS) -> np.ndarray:
+    """Sprout share values (uint8, nodata 255) with Google's speckle set to 0. On Google cells only: a value
+    below floor × 250 is 0, and with a seed, a cell is 0 unless a Google cell within radius cells reaches it."""
+    from scipy.ndimage import maximum_filter
+
+    google = (source == SOURCE_GOOGLE) & (share != SHARE_NODATA)
+    out = share.copy()
+    if floor > 0:
+        out[google & (share < floor * SHARE_SCALE)] = 0
+    if seed > 0:
+        near = maximum_filter(np.where(google, share, 0).astype(np.uint8), size=2 * radius + 1, mode="constant")
+        out[google & (near < seed * SHARE_SCALE)] = 0
+    return out
+
+
+def cleaned_path(name: str, floor: float, seed: float) -> Path:
+    """The window cut with speckle_rule applied, written once beside the cut."""
+    path = sprout_path(name)
+    if not floor and not seed:
+        return path
+    dest = path.with_name(f"{name}-gfloor{floor:g}-gseed{seed:g}.tif")
+    if not dest.exists():
+        ds = gdal.Open(str(path))
+        share = ds.GetRasterBand(1).ReadAsArray()
+        source = ds.GetRasterBand(2).ReadAsArray()
+        out = gdal.GetDriverByName("GTiff").CreateCopy(str(dest), ds, options=["COMPRESS=DEFLATE", "TILED=YES"])
+        out.GetRasterBand(1).WriteArray(speckle_rule(share, source, floor, seed))
+        out = None
+    return dest
 
 
 def layer(path: Path, floor: float = 0.0):
@@ -303,7 +353,9 @@ def encode(tile: Tile, top_zoom: int, top_rule: str, full: float, steps: int = S
 
 def settings_name(settings: dict) -> str:
     name = f"z{settings['top_zoom']}-{settings['top_rule']}-full{settings['full']:g}-{settings['parent']}-{settings['empty']}"
-    return name + (f"-floor{settings['floor']:g}" if settings.get("floor") else "")
+    name += f"-floor{settings['floor']:g}" if settings.get("floor") else ""
+    name += f"-gfloor{settings['google_floor']:g}" if settings.get("google_floor") else ""
+    return name + (f"-gseed{settings['google_seed']:g}" if settings.get("google_seed") else "")
 
 
 def peak_memory_bytes() -> int:
@@ -317,7 +369,8 @@ def build(name: str, settings: dict, dest: Path | None = None) -> dict:
     box = windows()[name]
     dest = dest or DATA / f"{name}-{settings_name(settings)}.pmtiles"
     top = settings["top_zoom"]
-    render_tile = layer(sprout_path(name), settings.get("floor", 0.0))
+    sprout = cleaned_path(name, settings.get("google_floor", 0.0), settings.get("google_seed", 0.0))
+    render_tile = layer(sprout, settings.get("floor", 0.0))
     boxes = compare.load_boxes()
     inner = boxes.get(box.get("box", ""))
     inner_bounds = compare.box_grid(inner["lat"], inner["lon"], inner["size_km"]).bounds() if inner else None
@@ -374,6 +427,9 @@ def build(name: str, settings: dict, dest: Path | None = None) -> dict:
         "zooms": {str(z): by_zoom[z] for z in sorted(by_zoom)},
         "top": top_stats,
         "sprout_km2": sprout_km2(name, extent),
+        "rule_km2": sprout_km2(name, extent, sprout),
+        "window_cells": cells_built(name),
+        "rule_cells": cells_built(name, sprout),
         "sprout_box_km2": sprout_box_km2(name, inner) if inner else None,
         "wall_seconds": round(time.perf_counter() - started, 1),
         "peak_memory_bytes": peak_memory_bytes(),
@@ -382,22 +438,32 @@ def build(name: str, settings: dict, dest: Path | None = None) -> dict:
     return record
 
 
-def read_cut(name: str) -> tuple[np.ndarray, compare.Grid]:
-    ds = gdal.Open(str(sprout_path(name)))
+def read_cut(name: str, path: Path | None = None) -> tuple[np.ndarray, compare.Grid]:
+    ds = gdal.Open(str(path or sprout_path(name)))
     west, cell, _, north, _, _ = ds.GetGeoTransform()
     grid = compare.Grid(round((west + 180) / cell), round((90 - north) / cell), ds.RasterXSize, ds.RasterYSize)
     return ds.GetRasterBand(1).ReadAsArray(), grid
 
 
-def sprout_km2(name: str, bounds) -> float:
+def sprout_km2(name: str, bounds, path: Path | None = None) -> float:
     """Built km² of the sprout inside bounds, edge cells weighted by their overlap."""
-    raw, grid = read_cut(name)
+    raw, grid = read_cut(name, path)
     share = np.where(raw == SHARE_NODATA, 0, raw / SHARE_SCALE)
     west, south, east, north = bounds
     wx = overlap(grid.west + np.arange(grid.cols + 1) * compare.CELL, west, east)
     wy = overlap(grid.north - np.arange(grid.rows + 1) * compare.CELL, south, north)
     area = compare.cell_area_km2(grid)
     return float((share * area * wy[:, None] * wx[None, :]).sum())
+
+
+def cells_built(name: str, path: Path | None = None) -> int:
+    """Sprout cells above 0 inside the window itself."""
+    raw, grid = read_cut(name, path)
+    west, south, east, north = window_bounds(windows()[name])
+    c0, c1 = round((west - grid.west) / compare.CELL), round((east - grid.west) / compare.CELL)
+    r0, r1 = round((grid.north - north) / compare.CELL), round((grid.north - south) / compare.CELL)
+    part = raw[r0:r1, c0:c1]
+    return int(((part > 0) & (part != SHARE_NODATA)).sum())
 
 
 def sprout_box_km2(name: str, box: dict) -> float:
@@ -496,7 +562,7 @@ def compare_tables() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("fetch", "window", "sample", "compare"))
+    parser.add_argument("command", choices=("fetch", "window", "sample", "speckle", "compare"))
     parser.add_argument("names", nargs="*")
     parser.add_argument("--top-zoom", type=int, default=BASELINE["top_zoom"])
     parser.add_argument("--top-rule", default=BASELINE["top_rule"])
@@ -504,6 +570,8 @@ def main() -> None:
     parser.add_argument("--parent", choices=("mean", "max"), default=BASELINE["parent"])
     parser.add_argument("--empty", choices=("keep", "drop"), default=BASELINE["empty"])
     parser.add_argument("--floor", type=float, default=BASELINE["floor"])
+    parser.add_argument("--google-floor", type=float, default=0.0)
+    parser.add_argument("--google-seed", type=float, default=0.0)
     args = parser.parse_args()
     recipe = yaml.safe_load(RECIPE.read_text())
     names = args.names or list(windows())
@@ -512,7 +580,7 @@ def main() -> None:
             print(json.dumps(fetch(recipe, name)), flush=True)
     elif args.command == "window":
         settings = {"top_zoom": args.top_zoom, "top_rule": args.top_rule, "full": args.full, "parent": args.parent, "empty": args.empty,
-                    "floor": args.floor}
+                    "floor": args.floor, "google_floor": args.google_floor, "google_seed": args.google_seed}
         for name in names:
             record = build(name, settings)
             print(json.dumps({k: record[k] for k in ("archive", "tiles", "bytes", "wall_seconds")}), flush=True)
@@ -520,6 +588,11 @@ def main() -> None:
         for name in names:
             for change in [{}] + VARIANTS:
                 record = build(name, {**BASELINE, **change})
+                print(json.dumps({k: record[k] for k in ("archive", "tiles", "bytes", "wall_seconds")}), flush=True)
+    elif args.command == "speckle":
+        for name in names:
+            for change in SPECKLE_VARIANTS:
+                record = build(name, {**RECOMMENDED, **change})
                 print(json.dumps({k: record[k] for k in ("archive", "tiles", "bytes", "wall_seconds")}), flush=True)
     else:
         print(compare_tables())
