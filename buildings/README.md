@@ -429,8 +429,8 @@ Task 05 prices the run from its pilot and asks for approval first.
 
 ### Cost of the sample
 
-No compute in the cloud. Reads from the sprout through the VRT: 6,524,064 bytes for the seven windows (Saint-Flour the most, 2.4 MB), inside the free monthly egress, under $0.01. Esri imagery for the renders is public. On the laptop: 137 window archives of 1.6–28 s each, peak resident memory 1.6 GB (the whole sample in one process). The archives and renders are in `data/buildings/tiles/` and `data/buildings/renders/`, not committed. No virtual machine ran.
+No compute in the cloud. Reads from the sprout through the VRT: 6,524,064 bytes for the seven windows (Saint-Flour the most, 2.4 MB), inside the free monthly egress, under $0.01. Esri imagery for the renders is public. On the laptop: 137 window archives of 1.6–28 s each, peak resident memory 1.6 GB (the whole sample in one process). The archives and renders are in `data/buildings/tiles/` and `data/buildings/renders/`, not committed. No virtual machine ran. Resumed on 19 November 2026: five windows read again with the 2 km margin, 4.0 MB, and 30 archives of 4–9 s each.
 
 ### Approval
 
-Waiting for the user.
+Approved by the user on 19 November 2026: top zoom 12, graded, `full` 0.25, mean parent, empty tiles dropped, and the Google speckle rule (floor 0.012, seed 0.15 within 2 km). The settings are on the recipe. The global estimate above holds: the Google rule removes about as many cells as the floor did (27% at Kongoussi).
