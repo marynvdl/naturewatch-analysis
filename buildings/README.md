@@ -470,3 +470,13 @@ python buildings/batch.py submit merge --approved               # after every sh
 | Merge | fetch the shards and roots, write the archive, rebuild 16 zoom 8 subtrees from the sprout VRT, upload | one spot `e2-standard-4`, 150 GB `pd-standard`, about 1–2 hours | about $0.15–0.30 | the archive: 6–15 GB, $0.12–0.30 a month |
 
 Bytes scale with built cells: the pilot stored 2.7 bytes a sprout built cell, and the task 04 windows 1.0–2.0, where TEMPO's dense towns pack better than Sahel villages. That gives 2.2–3.8 million tiles and 6–15 GB, against the task 04 estimate of 10–25 GB. About $1.4–3.2 in all, inside the task 04 estimate of $1.5–3.8. Reads of the sprout and the shards inside `europe-west1` are free.
+
+**Shards, all.** Approved by the user on 19 November 2026 with the revised cost above. Submitted at 20:16 UTC: 557 tasks, one shard each, 12 at a time, spot `e2-standard-2`, 30 GB `pd-standard`, up to 3 retries a task. Shard `5-15-14` is skipped, done by the pilot.
+
+- job: `buildings-2023-v1-tiles-202611192015`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`
+- status: `gcloud batch jobs describe buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python buildings/batch.py records`
+- result: pending
