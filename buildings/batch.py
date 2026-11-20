@@ -54,14 +54,14 @@ BATCH_ENV = "NATUREWATCH_TILES_BATCH"
 PROJECT = cropland.PROJECT
 REGION = shards.REGION
 WORK = ROOT / "data" / "buildings" / "batch"
-PARALLELISM = 12  # 24 E2 CPUs in europe-west1, two a machine
+PARALLELISM = 64  # 128 of the 200 N2 CPUs in europe-west1 (E2 allows only 24), two a machine
 CODE_FILES = (
     "buildings/batch.py", "buildings/tiles.py",
     "tiles/cropland.py", "tiles/global_cropland.py", "tiles/pyramid.py", "tiles/shards.py", "tiles/transcode.py",
 )
 SHAPES = {
     "tiles": {  # one shard a task: its block COGs and one root-to-leaf path of 512 px tiles in memory
-        "machine": "e2-standard-2",
+        "machine": "n2-standard-2",
         "cpu_milli": "2000",
         "memory_mib": "6144",
         "disk_gb": 30,
