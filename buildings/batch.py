@@ -54,7 +54,7 @@ BATCH_ENV = "NATUREWATCH_TILES_BATCH"
 PROJECT = cropland.PROJECT
 REGION = shards.REGION
 WORK = ROOT / "data" / "buildings" / "batch"
-PARALLELISM = 64  # 128 of the 200 N2 CPUs in europe-west1 (E2 allows only 24), two a machine
+PARALLELISM = 16  # 32 CPUs across all regions (CPUS_ALL_REGIONS), two a machine; E2 allows only 24 in europe-west1
 CODE_FILES = (
     "buildings/batch.py", "buildings/tiles.py",
     "tiles/cropland.py", "tiles/global_cropland.py", "tiles/pyramid.py", "tiles/shards.py", "tiles/transcode.py",
