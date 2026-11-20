@@ -495,4 +495,12 @@ Bytes scale with built cells: the pilot stored 2.7 bytes a sprout built cell, an
 - output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`
 - status: `gcloud batch jobs describe buildings-2023-v1-tiles-202611201335 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-202611201335 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 17,439 s (4 h 51 min), 557 of 557 tasks. 362 shards with tiles: 1,519,843 tiles, 9,892,046,274 bytes, 18 tiles more than the first run, from faint pixels on cell-aligned columns. Shard time summed to 128,409 s (35.7 hours: N2 cores ran the same work in two thirds of E2's time), of which 711 s copying blocks; the longest shard 1,175 s; peak memory 0.83 GB. Compute about $1–2 at spot `n2-standard-2` rates for 16 machines over the run, plus about $0.07 of disk.
+
+**Merge, second run.** Approved with the first merge. Submitted on 20 November 2026 at 20:10 UTC: one spot `e2-standard-4`, 150 GB `pd-standard`, one retry. The archive path was empty.
+
+- job: `buildings-2023-v1-merge-202611202010`, `europe-west1`
+- output: `gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
+- status: `gcloud batch jobs describe buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
 - result: pending
