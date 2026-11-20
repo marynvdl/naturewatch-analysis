@@ -44,7 +44,7 @@ btiles = importlib.util.module_from_spec(_spec)
 sys.modules["buildings_tiles"] = btiles
 _spec.loader.exec_module(btiles)
 
-CODE_VERSION = "1"
+CODE_VERSION = "2"
 SHARD_ZOOM = 5
 BLOCK_DEG = 10
 MERCATOR_LAT = 85.0511287798

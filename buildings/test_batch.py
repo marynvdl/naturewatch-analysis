@@ -102,3 +102,26 @@ def test_empty_tiles_are_not_stored_but_feed_their_parent():
     built = btiles.Tile(np.full((512, 512), 0.1, np.float32), np.ones((512, 512), np.float32), 12)
     assert encode(empty) == b""
     assert encode(built) == btiles.encode(built, 12, "graded", 0.25, 7)
+
+
+def test_a_tile_renders_alike_from_a_block_mosaic_and_the_global_vrt(tmp_path):
+    """Column 3280 at zoom 12 starts on a cell edge (108.28125° E). A shard reads a mosaic cornered at its blocks,
+    the merge check the VRT cornered at 180° W, 90° N; the render must round both the same way."""
+    cell, west, north, size = 0.00025, 108.0, 22.0, 2000
+    rng = np.random.default_rng(3)
+    share = np.where(rng.random((size, size)) > 0.7, rng.integers(1, 9, (size, size)), 0).astype(np.uint8)
+    share[rng.integers(0, size, 60), rng.integers(0, size, 60)] = 80
+    block = tmp_path / "block.tif"
+    out = gdal.GetDriverByName("GTiff").Create(str(block), size, size, 2, gdal.GDT_Byte)
+    out.SetGeoTransform((west, cell, 0, north, 0, -cell))
+    out.SetProjection("EPSG:4326")
+    out.GetRasterBand(1).WriteArray(share)
+    out.GetRasterBand(2).WriteArray(np.ones((size, size), np.uint8))  # Google
+    out = None
+    whole = tmp_path / "global.vrt"
+    gdal.BuildVRT(str(whole), [str(block)], outputBounds=(-180, north - size * cell, west + size * cell, 90)).FlushCache()
+    mosaic, world = btiles.layer(block, 0.0, 0.012, 0.15, 72), btiles.layer(whole, 0.0, 0.012, 0.15, 72)
+    for y in range(1792, 1797):
+        a, b = mosaic(12, 3280, y), world(12, 3280, y)
+        assert a is not None and b is not None
+        assert np.array_equal(a.share, b.share) and np.array_equal(a.valid, b.valid)

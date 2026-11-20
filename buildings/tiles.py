@@ -290,13 +290,16 @@ def layer(path: Path | str, floor: float = 0.0, google_floor: float = 0.0, googl
     source_band = source.GetRasterBand(2)
     ruled = google_floor > 0 or google_seed > 0
     pad = radius if ruled else 0
+    # Windows and the warp origin are worked out on the global cell grid (180° W, 90° N), not from this raster's
+    # corner, so a shard's block mosaic and the global VRT round alike and give the same bytes.
+    grid_col, grid_row = round((west0 + 180) / cell), round((90 - north0) / -neg)
 
     def render(z: int, x: int, y: int) -> Tile | None:
         west, south, east, north = tile_bounds_deg(z, x, y)
-        col0 = max(0, math.floor((west - west0) / cell) - MARGIN)
-        col1 = min(width, math.ceil((east - west0) / cell) + MARGIN)
-        row0 = max(0, math.floor((north0 - north) / -neg) - MARGIN)
-        row1 = min(height, math.ceil((north0 - south) / -neg) + MARGIN)
+        col0 = max(0, math.floor((west + 180) / cell) - MARGIN - grid_col)
+        col1 = min(width, math.ceil((east + 180) / cell) + MARGIN - grid_col)
+        row0 = max(0, math.floor((90 - north) / -neg) - MARGIN - grid_row)
+        row1 = min(height, math.ceil((90 - south) / -neg) + MARGIN - grid_row)
         if col1 <= col0 or row1 <= row0:
             return None
         if ruled:
@@ -315,7 +318,7 @@ def layer(path: Path | str, floor: float = 0.0, google_floor: float = 0.0, googl
         if not valid.any():
             return None
         mem = gdal.GetDriverByName("MEM").Create("", col1 - col0, row1 - row0, 2, gdal.GDT_Float32)
-        mem.SetGeoTransform((west0 + col0 * cell, cell, 0, north0 + row0 * neg, 0, neg))
+        mem.SetGeoTransform((-180 + (grid_col + col0) * cell, cell, 0, 90 + (grid_row + row0) * neg, 0, neg))
         mem.SetProjection(srs)
         mem.GetRasterBand(1).WriteArray(np.where(valid, raw / SHARE_SCALE, 0).astype(np.float32))
         mem.GetRasterBand(2).WriteArray(valid.astype(np.float32))
