@@ -128,6 +128,10 @@ Cause: an island ecoregion smaller than a zoom 0 tile unit (360° / 4,096, about
 
 Fix, chosen by the user: the 11 ecoregions under 30 km² start at zoom 1. With that band the same 100 passed the proof: 89 at zoom 0, all 100 from zoom 1 to 12, 8.2 s, 475 MB peak.
 
+**Resubmitted 21 November 2026, 19:28 UTC**, with the zoom 1 band. Job `places-places-ecoregions-20261121192845`. Status: `gcloud batch jobs describe places-places-ecoregions-20261121192845 --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete places-places-ecoregions-20261121192845 --location=europe-west1 --project=nature-watch-387210`.
+
+Result: not yet recorded.
+
 ## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
 
 Approved by the user. First the stale South Africa rollback copy `v1/places.previous.pmtiles` (3,592,259 bytes) was deleted, so that `--replace` keeps the global build of 31 October as the rollback copy. Both jobs use the image of 31 October, spot `e2-standard-8` in `europe-west1`, `maxRunDuration` 7,200 s, one retry, validation `none`.
