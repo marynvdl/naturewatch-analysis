@@ -118,6 +118,12 @@ Cropped laptop proof, 21 November 2026, against the local Supabase stack holding
 
 The image of 31 October is reused. The job downloads the script and the recipe from `gs://nature-watch-bucket/scratch/places/ecoregions/`, so no image is built or pushed. The object is new, so there is no `--replace` and no rollback copy. These are my estimates, not a quote.
 
+**Submitted 21 November 2026, 18:12 UTC**, approved by the user. Job `places-places-ecoregions-20261121181209`, `europe-west1`, command `submit --recipe cookbook/recipes/places-ecoregions.yaml`, validation `none`. Output `gs://nature-watch-tiles/places/ecoregions/v1/ecoregions.pmtiles`.
+
+Status: `gcloud batch jobs describe places-places-ecoregions-20261121181209 --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete places-places-ecoregions-20261121181209 --location=europe-west1 --project=nature-watch-387210`.
+
+Result: not yet recorded.
+
 ## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
 
 Approved by the user. First the stale South Africa rollback copy `v1/places.previous.pmtiles` (3,592,259 bytes) was deleted, so that `--replace` keeps the global build of 31 October as the rollback copy. Both jobs use the image of 31 October, spot `e2-standard-8` in `europe-west1`, `maxRunDuration` 7,200 s, one retry, validation `none`.
