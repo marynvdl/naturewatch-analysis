@@ -503,4 +503,29 @@ Bytes scale with built cells: the pilot stored 2.7 bytes a sprout built cell, an
 - output: `gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
 - status: `gcloud batch jobs describe buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
 - cancel: `gcloud batch jobs delete buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
-- result: pending
+- result: succeeded, run duration 1,585 s (26 min): 347 s fetching the shards, 589 s writing the archive, the rest the sample rebuilds and the upload. Peak memory 5.5 GB. The shard scratch was deleted. Compute about $0.03 at spot `e2-standard-4` rates.
+
+### Published archive
+
+`gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
+
+| | Result |
+| --- | --- |
+| Tiles | 1,520,020 (1,519,843 in 362 shards, 177 at zooms 0–4); 1,519,870 distinct bodies |
+| By zoom, 5 to 12 | 362; 1,104; 3,377; 10,356; 32,039; 101,488; 326,226; 1,044,891 |
+| Bytes | 9,893,205,483 (9.21 GiB), about $0.20 a month in the tiles bucket |
+| Bounds | −180 to 180, −60 to 80°; zooms 0–12 |
+| Metadata | version `buildings-2023-v1`, attribution Google Open Buildings 2.5D Temporal 2023 (CC BY 4.0) and Microsoft TEMPO global building density 2023q4 (CDLA Permissive 2.0), the shades, `share_full` and the Google speckle rule |
+| Sprout check | 12 random and 4 shard-edge zoom 8 subtrees rebuilt from the sprout VRT, 2,624 tiles, byte for byte the same; `8/205/112`, which failed the first merge, among them (roots in the merge log) |
+| Cache-Control | `public, max-age=31536000, immutable` |
+| Range request | 206, `Content-Range: bytes 0-126/9893205483` |
+| CORS | GET with Range from `http://localhost:5173` returns `Access-Control-Allow-Origin`; a preflight from `https://naturewatch.space` answers 200 |
+
+### Cost
+
+| Step | Estimate (task 04, then the pilot) | Spent |
+| --- | --- | --- |
+| Pilot | under $0.05 | about $0.01 |
+| Shards | $1.5–3.5, then $1.2–2.8 | about $1.4–1.9 for the first run (E2, superseded) and about $1–2 for the rerun (N2), plus about $0.16 of disk |
+| Merges | under $0.30 | about $0.02 for the failed merge, about $0.03 for the second |
+| In all | about $1.5–3.5 | about $2.5–4: the rerun after the render fix doubled the shard bill |
