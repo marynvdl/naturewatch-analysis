@@ -22,9 +22,12 @@ tiles:
   properties:
     - id
     - area_km2
-  # Ecoregions cover the land without gaps, so every one is written from zoom 0.
+  # Ecoregions cover the land without gaps, so they are written from zoom 0.
+  # Below 30 km² an island ecoregion is smaller than a zoom 0 tile unit, and
+  # Tippecanoe drops some there, so those start at zoom 1.
   minzoom_by_area_km2:
-    - { area_km2: 0, minzoom: 0 }
+    - { area_km2: 30, minzoom: 0 }
+    - { area_km2: 0, minzoom: 1 }
   simplification: 1
   simplification_max_zoom: 0
   # Neighbours simplify their shared edge the same way.

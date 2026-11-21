@@ -35,7 +35,7 @@ Flags, from `TIPPECANOE_FLAGS` and the protected-area recipe. The recognition re
 --no-feature-limit --no-tile-size-limit --no-tiny-polygon-reduction --read-parallel --force
 ```
 
-A recipe with `tiles.detect_shared_borders: true` adds `--detect-shared-borders`, so neighbours that share an edge simplify it the same way and a fill shows no slivers. Only the ecoregion recipe sets it. Its one band, 0 km² from zoom 0, writes every ecoregion from zoom 0, because ecoregions cover the land without gaps.
+A recipe with `tiles.detect_shared_borders: true` adds `--detect-shared-borders`, so neighbours that share an edge simplify it the same way and a fill shows no slivers. Only the ecoregion recipe sets it. Its bands write ecoregions of 30 km² and more from zoom 0, because ecoregions cover the land without gaps, and the 11 smaller island ecoregions from zoom 1.
 
 Every place is its own feature carrying `tippecanoe.minzoom` from the recipe bands. No dropping by density, no coalescing, no size cap. `cropland_percent` is left off a feature that has no fact.
 
@@ -111,7 +111,7 @@ Cropped laptop proof, 21 November 2026, against the local Supabase stack holding
 | --- | --- |
 | Database read from the Batch job | about 180 MB |
 | Archive | about 100 to 200 MB |
-| Batch run | 5 to 15 minutes on spot `e2-standard-8`, `europe-west1`, `maxRunDuration` 7,200 s, one retry |
+| Batch run | 5 to 15 minutes (it was 33 minutes per attempt) on spot `e2-standard-8`, `europe-west1`, `maxRunDuration` 7,200 s, one retry |
 | Peak memory | a few GiB, inside the 32 GiB machine |
 | Machine time | about $0.02, plus cents of disk and logging |
 | Storage | under $0.01 a month |
@@ -122,7 +122,11 @@ The image of 31 October is reused. The job downloads the script and the recipe f
 
 Status: `gcloud batch jobs describe places-places-ecoregions-20261121181209 --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete places-places-ecoregions-20261121181209 --location=europe-west1 --project=nature-watch-387210`.
 
-Result: not yet recorded.
+**Result: FAILED, nothing uploaded.** Both attempts (18:13 to 18:47 and 18:47 to 19:21 UTC, Batch run duration 4,063 s) built the archive, then the proof stopped them with exit 1: `zoom 0: 2 places missing after their minzoom`. Script wall time 2,002 s per attempt, peak memory 1,446,215,680 bytes. Scratch was cleaned. About 68 minutes of spot `e2-standard-8`, roughly $0.11 at my estimate.
+
+Cause: an island ecoregion smaller than a zoom 0 tile unit (360° / 4,096, about 10 km) can quantise to nothing, and Tippecanoe drops it even with `--no-tiny-polygon-reduction`, with or without `--detect-shared-borders`. Tiling the 100 smallest ecoregions on the laptop (up to 3,089 km²) dropped the same two at zoom 0: San Félix-San Ambrosio Islands temperate forests (6.5 km², two islets) and Clipperton Island shrub and grasslands (28.8 km²). Both were present from zoom 1. Which islets drop depends on where they fall on the tile grid.
+
+Fix, chosen by the user: the 11 ecoregions under 30 km² start at zoom 1. With that band the same 100 passed the proof: 89 at zoom 0, all 100 from zoom 1 to 12, 8.2 s, 475 MB peak.
 
 ## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
 

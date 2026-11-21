@@ -422,15 +422,17 @@ def test_the_ecoregions_recipe_names_its_own_archive_and_type():
     assert places.default_dest(ECOREGIONS).parts[-2:] == ("ecoregions", "ecoregions.pmtiles")
 
 
-def test_every_ecoregion_is_written_from_zoom_0(tmp_path):
+def test_ecoregions_are_written_from_zoom_0_and_islands_from_zoom_1(tmp_path):
     source = tmp_path / "ecoregions.geojson"
     write_geojson(source, sample_places())
     for place in places.places_from_file(source):
         line = json.loads(places.feature_line(place, ECOREGIONS))
-        assert line["tippecanoe"] == {"minzoom": 0}
+        assert line["tippecanoe"] == {"minzoom": 0 if place.area_km2 >= 30 else 1}
         assert set(line["properties"]) == {"id", "area_km2"}
     bands = places.places_contract(ECOREGIONS)["minzoom_by_area_km2"]
-    assert places.minzoom_for_area(6.04, bands) == 0
+    assert places.minzoom_for_area(30, bands) == 0
+    assert places.minzoom_for_area(28.8, bands) == 1
+    assert places.minzoom_for_area(6.04, bands) == 1
 
 
 def test_only_the_ecoregions_detect_shared_borders():
