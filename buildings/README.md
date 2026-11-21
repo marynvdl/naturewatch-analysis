@@ -434,3 +434,98 @@ No compute in the cloud. Reads from the sprout through the VRT: 6,524,064 bytes 
 ### Approval
 
 Approved by the user on 19 November 2026: top zoom 12, graded, `full` 0.25, mean parent, empty tiles dropped, and the Google speckle rule (floor 0.012, seed 0.15 within 2 km). The settings are on the recipe. The global estimate above holds: the Google rule removes about as many cells as the floor did (27% at Kongoussi).
+
+## Global tiles (task 05)
+
+```bash
+python buildings/batch.py plan                                  # data/buildings/batch/plan.json: 557 shards over 363 blocks
+python buildings/batch.py local kocho-window edge-window        # the shard and merge code on a task 04 cut, against the task 04 archive
+python buildings/batch.py submit tiles --pilot 5-15-14 [--approved]   # one shard; prints the job, submits only with --approved
+python buildings/batch.py submit tiles --approved               # every shard, one task each, 12 at a time
+python buildings/batch.py records                               # totals from the shard records written so far
+python buildings/batch.py submit merge --approved               # after every shard has a record
+```
+
+**Shards.** One shard per zoom 5 tile that meets a sprout block with a COG: 557 shards. A shard copies every block that meets it widened by 74 cells (0.0185°), 1–9 blocks and at most 0.9 GB, builds a VRT over them, renders zoom 12 and reduces to zoom 5 with the recipe's settings. A top-zoom tile reads the share and source bands under it with 72 more cells on every side, applies Google's speckle rule to what it read (`tiles.py speckle_rule`), and warps the share with `average`. So a tile is the same wherever the source is cut, and shards meet without a seam. A tile with no building is not stored, but feeds its parent. The shard writes its archive, its zoom 5 root (share and valid, unquantised, `.root.npz`) and a record, last, under `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`. A record carries a hash of the settings, so a rerun skips a current shard. The shard and merge code is `tiles/shards.py`, shared with roads. A tile works out its window and warp origin on the global cell grid (180° W, 90° N), so a shard's block mosaic and the sprout VRT give the same bytes. Spot `n2-standard-2`, 16 at a time (32 CPUs across all regions; E2 allows only 24 in the region), 30 GB `pd-standard`.
+
+**Merge.** One task: it checks every shard record, builds zooms 0–4 from the roots, streams the shards in tile id order, rebuilds 12 random zoom 8 subtrees and 4 on a shard's west or north edge from the sprout VRT and compares them byte for byte, uploads with `Cache-Control: public, max-age=31536000, immutable`, checks a 206 Range answer and deletes the shards. It refuses to overwrite an archive that exists. Spot `e2-standard-4`, 150 GB `pd-standard`.
+
+**Local check, 19 November 2026.** Through `local`, from the task 04 cuts on the laptop. Every tile that lies wholly inside the window is the task 04 archive's tile byte for byte (approved settings): 17 of 17 at Kocho, 63 of 63 at the edge window. The edge archive holds 11 more tiles, in the read margin outside the window. The sample check rebuilt 42 tiles from the Kocho cut and agreed. Each window took 4–6 s at a peak of 0.45 GB.
+
+### Runs
+
+**Pilot, shard `5-15-14`** (11.25° W to 0°, 11.18° N to 21.94° N: Burkina Faso, Mali and Mauritania, with Kongoussi; blocks `E000N10`, `E000N20`, `W010N10`, `W010N20`, `W020N10`, `W020N20`, 117,525,228 bytes). Approved with the task file, expected under $0.05. Submitted 19 November 2026 at 19:52 UTC. One spot `e2-standard-2`, 30 GB `pd-standard`.
+
+- job: `buildings-2023-v1-tiles-pilot-5-15-14-202611191951`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/5-15-14.pmtiles`, `.root.npz` and `.json`; the full run skips this shard
+- status: `gcloud batch jobs describe buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-pilot-5-15-14-202611191951 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 1,052 s. 11,017 tiles (7,901 at zoom 12 of the 16,384 possible; 5 to 12: 1, 4, 16, 51, 177, 624, 2,243, 7,901), 43,928,046 bytes, 4.0 KB a tile, and a 2,097,906 byte root. 1,042 s in the shard, of which 3.2 s copying the six blocks; peak memory 0.53 GB.
+
+**Revised cost, from the pilot.** For approval before the full jobs. The block records give each block's valid and built cells. Spread evenly over a block, they put about 15,900 valid zoom 12 tiles (land or Google's coverage, which includes some sea) and 16 million built cells in the pilot shard. Over the 557 shards they give 3.19 million valid zoom 12 tiles, 201 times the pilot, and 5.46 billion built cells, 341 times.
+
+| Job | Work | Machine and time | Compute | Stored |
+| --- | --- | --- | --- | --- |
+| Shards | 556 more shards. A valid tile is read and warped whether or not it has a building, so time scales with valid tiles: 58 task-hours at the pilot's 0.066 s a valid tile, 45–80 with denser or sparser shards. The longest shard is about 18 minutes | spot `e2-standard-2`, 30 GB `pd-standard`, 12 at a time, about 4–7 hours of wall time | about $1.2–2.8, plus about $0.10 of disk | 6–15 GB of shards in scratch until the merge deletes them |
+| Merge | fetch the shards and roots, write the archive, rebuild 16 zoom 8 subtrees from the sprout VRT, upload | one spot `e2-standard-4`, 150 GB `pd-standard`, about 1–2 hours | about $0.15–0.30 | the archive: 6–15 GB, $0.12–0.30 a month |
+
+Bytes scale with built cells: the pilot stored 2.7 bytes a sprout built cell, and the task 04 windows 1.0–2.0, where TEMPO's dense towns pack better than Sahel villages. That gives 2.2–3.8 million tiles and 6–15 GB, against the task 04 estimate of 10–25 GB. About $1.4–3.2 in all, inside the task 04 estimate of $1.5–3.8. Reads of the sprout and the shards inside `europe-west1` are free.
+
+**Shards, all.** Approved by the user on 19 November 2026 with the revised cost above. Submitted at 20:16 UTC: 557 tasks, one shard each, 12 at a time, spot `e2-standard-2`, 30 GB `pd-standard`, up to 3 retries a task. Shard `5-15-14` is skipped, done by the pilot.
+
+- job: `buildings-2023-v1-tiles-202611192015`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`
+- status: `gcloud batch jobs describe buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- tasks: `gcloud batch tasks list --job=buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-202611192015 --location=europe-west1 --project=nature-watch-387210`
+- totals: `python buildings/batch.py records`
+- result: succeeded, run duration 25,519 s (7 h 5 min), 557 of 557 tasks. 362 shards with tiles: 1,519,825 tiles, 9,891,945,147 bytes. Shard time summed to 196,201 s (54.5 hours, the pilot included), of which 811 s copying blocks; the longest shard 1,759 s; peak memory 0.83 GB. Fewer tiles than estimated (2.2–3.8 million) and bytes inside the range (6–15 GB): more valid tiles than expected held no building and were not stored. Compute about $1.4–1.9 at spot `e2-standard-2` rates, plus about $0.09 of disk.
+
+**Merge.** Approved by the user on 20 November 2026 (expected 1–2 hours, $0.15–0.30). Submitted at 07:00 UTC: one spot `e2-standard-4`, 150 GB `pd-standard`, one retry.
+
+- job: `buildings-2023-v1-merge-202611200700`, `europe-west1`
+- output: `gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
+- status: `gcloud batch jobs describe buildings-2023-v1-merge-202611200700 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-merge-202611200700 --location=europe-west1 --project=nature-watch-387210`
+- result: failed after 1,233 s, before upload; about $0.02. The sprout check found 12 tiles under `8/205/112` that differed from shard `5-25-14`: 2–74 pixels each, `no building` against the faintest shade. The cause was not the data: a tile worked out its window and warp origin from its raster's corner, so on a zoom 12 column that starts on a cell edge (here 108.28125° E) a shard's mosaic and the VRT rounded apart by about 10⁻⁸ of share. Fixed in code version 2 by working on the global cell grid. Rebuilt from both corners, 1,176 tiles under eight subtrees of that shard matched, and the Kocho and edge windows still matched task 04 (17 of 17, 63 of 63). Nothing was published.
+
+**Shards, rerun with code version 2.** Approved by the user on 20 November 2026, with a switch to spot `n2-standard-2` to cut the wall time. The first submission, `buildings-2023-v1-tiles-202611201119` at 64 at a time, never started a machine: the project allows 32 CPUs across all regions (`CPUS_ALL_REGIONS`), and Batch requeued the job on `QUOTA_FOR_INSTANCES` instead of running fewer. It was cancelled at 13:35 UTC at no cost. Resubmitted at 13:35 UTC at 16 at a time (32 CPUs), about 4–5 hours and $1.5–2.5, plus about $0.10 of disk: 557 tasks, 30 GB `pd-standard`, up to 3 retries a task.
+
+- job: `buildings-2023-v1-tiles-202611201335`, `europe-west1`
+- output: `gs://nature-watch-bucket/scratch/buildings/buildings-2023-v1/tiles/shards/`
+- status: `gcloud batch jobs describe buildings-2023-v1-tiles-202611201335 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-tiles-202611201335 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 17,439 s (4 h 51 min), 557 of 557 tasks. 362 shards with tiles: 1,519,843 tiles, 9,892,046,274 bytes, 18 tiles more than the first run, from faint pixels on cell-aligned columns. Shard time summed to 128,409 s (35.7 hours: N2 cores ran the same work in two thirds of E2's time), of which 711 s copying blocks; the longest shard 1,175 s; peak memory 0.83 GB. Compute about $1–2 at spot `n2-standard-2` rates for 16 machines over the run, plus about $0.07 of disk.
+
+**Merge, second run.** Approved with the first merge. Submitted on 20 November 2026 at 20:10 UTC: one spot `e2-standard-4`, 150 GB `pd-standard`, one retry. The archive path was empty.
+
+- job: `buildings-2023-v1-merge-202611202010`, `europe-west1`
+- output: `gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
+- status: `gcloud batch jobs describe buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
+- cancel: `gcloud batch jobs delete buildings-2023-v1-merge-202611202010 --location=europe-west1 --project=nature-watch-387210`
+- result: succeeded, run duration 1,585 s (26 min): 347 s fetching the shards, 589 s writing the archive, the rest the sample rebuilds and the upload. Peak memory 5.5 GB. The shard scratch was deleted. Compute about $0.03 at spot `e2-standard-4` rates.
+
+### Published archive
+
+`gs://nature-watch-tiles/buildings/2023/v1/buildings.pmtiles`
+
+| | Result |
+| --- | --- |
+| Tiles | 1,520,020 (1,519,843 in 362 shards, 177 at zooms 0–4); 1,519,870 distinct bodies |
+| By zoom, 5 to 12 | 362; 1,104; 3,377; 10,356; 32,039; 101,488; 326,226; 1,044,891 |
+| Bytes | 9,893,205,483 (9.21 GiB), about $0.20 a month in the tiles bucket |
+| Bounds | −180 to 180, −60 to 80°; zooms 0–12 |
+| Metadata | version `buildings-2023-v1`, attribution Google Open Buildings 2.5D Temporal 2023 (CC BY 4.0) and Microsoft TEMPO global building density 2023q4 (CDLA Permissive 2.0), the shades, `share_full` and the Google speckle rule |
+| Sprout check | 12 random and 4 shard-edge zoom 8 subtrees rebuilt from the sprout VRT, 2,624 tiles, byte for byte the same; `8/205/112`, which failed the first merge, among them (roots in the merge log) |
+| Cache-Control | `public, max-age=31536000, immutable` |
+| Range request | 206, `Content-Range: bytes 0-126/9893205483` |
+| CORS | GET with Range from `http://localhost:5173` returns `Access-Control-Allow-Origin`; a preflight from `https://naturewatch.space` answers 200 |
+
+### Cost
+
+| Step | Estimate (task 04, then the pilot) | Spent |
+| --- | --- | --- |
+| Pilot | under $0.05 | about $0.01 |
+| Shards | $1.5–3.5, then $1.2–2.8 | about $1.4–1.9 for the first run (E2, superseded) and about $1–2 for the rerun (N2), plus about $0.16 of disk |
+| Merges | under $0.30 | about $0.02 for the failed merge, about $0.03 for the second |
+| In all | about $1.5–3.5 | about $2.5–4: the rerun after the render fix doubled the shard bill |

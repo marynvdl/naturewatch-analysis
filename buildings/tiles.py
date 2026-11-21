@@ -46,14 +46,16 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-import yaml
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "tiles"))
 
-import compare  # noqa: E402
+try:
+    import compare  # noqa: E402  the windows and their areas; needs yaml and pyproj, which the Batch container lacks
+except ImportError:
+    compare = None  # a Batch shard only needs the layer maths below
 import cropland  # noqa: E402  tiles/cropland.py: tile maths
 import pyramid  # noqa: E402
 import transcode  # noqa: E402
@@ -62,7 +64,7 @@ from osgeo import gdal  # noqa: E402
 gdal.UseExceptions()
 
 RECIPE = ROOT / "cookbook" / "recipes" / "buildings-2023-v1.yaml"
-DATA = compare.CACHE / "tiles"
+DATA = ROOT / "data" / "buildings" / "tiles"
 SIZE = 512
 STEPS = 7
 MARGIN = 2  # sprout cells read around a top-zoom tile
@@ -229,17 +231,31 @@ def km2_in(tile: Tile, x: int, y: int, bounds) -> float:
 def speckle_rule(share: np.ndarray, source: np.ndarray, floor: float = 0.0, seed: float = 0.0,
                  radius: int = SEED_RADIUS) -> np.ndarray:
     """Sprout share values (uint8, nodata 255) with Google's speckle set to 0. On Google cells only: a value
-    below floor × 250 is 0, and with a seed, a cell is 0 unless a Google cell within radius cells reaches it."""
-    from scipy.ndimage import maximum_filter
-
+    below floor × 250 is 0, and with a seed, a cell is 0 unless a Google cell within radius cells reaches it.
+    Cells outside the arrays are not seeds."""
     google = (source == SOURCE_GOOGLE) & (share != SHARE_NODATA)
     out = share.copy()
     if floor > 0:
         out[google & (share < floor * SHARE_SCALE)] = 0
     if seed > 0:
-        near = maximum_filter(np.where(google, share, 0).astype(np.uint8), size=2 * radius + 1, mode="constant")
-        out[google & (near < seed * SHARE_SCALE)] = 0
+        near = dilate(google & (share >= seed * SHARE_SCALE), radius)
+        out[google & ~near] = 0
     return out
+
+
+def dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    """True where a True cell lies within `radius` cells either side, in a square window, by running sums.
+    Cells outside the array count as False. The same as sprout/buildings.py dilate, without scipy."""
+    out = mask.astype(np.int32)
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (radius + 1, radius)
+        c = np.cumsum(np.pad(out, pad), axis=axis, dtype=np.int32)
+        n = out.shape[axis]
+        hi = np.take(c, np.arange(2 * radius + 1, 2 * radius + 1 + n), axis=axis)
+        lo = np.take(c, np.arange(0, n), axis=axis)
+        out = (hi - lo > 0).astype(np.int32)
+    return out.astype(bool)
 
 
 def cleaned_path(name: str, floor: float, seed: float) -> Path:
@@ -258,30 +274,51 @@ def cleaned_path(name: str, floor: float, seed: float) -> Path:
     return dest
 
 
-def layer(path: Path, floor: float = 0.0):
-    """render(z, x, y) for the top zoom from a window cut (or any sprout with the two bands)."""
+def layer(path: Path | str, floor: float = 0.0, google_floor: float = 0.0, google_seed: float = 0.0,
+          radius: int = SEED_RADIUS):
+    """render(z, x, y) for the top zoom from a window cut, a block COG or a VRT with the two sprout bands.
+
+    With a Google rule, each tile reads `radius` more cells on every side and applies speckle_rule to what
+    it read, so the result does not depend on where the source is cut. The window flow instead applies the
+    rule once to its cut (cleaned_path) and renders without it.
+    """
     source = gdal.Open(str(path))
     west0, cell, _, north0, _, neg = source.GetGeoTransform()
     width, height = source.RasterXSize, source.RasterYSize
     srs = source.GetProjection()
     band = source.GetRasterBand(1)
+    source_band = source.GetRasterBand(2)
+    ruled = google_floor > 0 or google_seed > 0
+    pad = radius if ruled else 0
+    # Windows and the warp origin are worked out on the global cell grid (180° W, 90° N), not from this raster's
+    # corner, so a shard's block mosaic and the global VRT round alike and give the same bytes.
+    grid_col, grid_row = round((west0 + 180) / cell), round((90 - north0) / -neg)
 
     def render(z: int, x: int, y: int) -> Tile | None:
         west, south, east, north = tile_bounds_deg(z, x, y)
-        col0 = max(0, math.floor((west - west0) / cell) - MARGIN)
-        col1 = min(width, math.ceil((east - west0) / cell) + MARGIN)
-        row0 = max(0, math.floor((north0 - north) / -neg) - MARGIN)
-        row1 = min(height, math.ceil((north0 - south) / -neg) + MARGIN)
+        col0 = max(0, math.floor((west + 180) / cell) - MARGIN - grid_col)
+        col1 = min(width, math.ceil((east + 180) / cell) + MARGIN - grid_col)
+        row0 = max(0, math.floor((90 - north) / -neg) - MARGIN - grid_row)
+        row1 = min(height, math.ceil((90 - south) / -neg) + MARGIN - grid_row)
         if col1 <= col0 or row1 <= row0:
             return None
-        raw = band.ReadAsArray(col0, row0, col1 - col0, row1 - row0)
+        if ruled:
+            c0, c1 = max(0, col0 - pad), min(width, col1 + pad)
+            r0, r1 = max(0, row0 - pad), min(height, row1 + pad)
+            wide = band.ReadAsArray(c0, r0, c1 - c0, r1 - r0)
+            if (wide == SHARE_NODATA).all():
+                return None
+            wide = speckle_rule(wide, source_band.ReadAsArray(c0, r0, c1 - c0, r1 - r0), google_floor, google_seed, radius)
+            raw = wide[row0 - r0 : row1 - r0, col0 - c0 : col1 - c0]
+        else:
+            raw = band.ReadAsArray(col0, row0, col1 - col0, row1 - row0)
         valid = raw != SHARE_NODATA
         if floor > 0:
             raw = np.where(valid & (raw < floor * SHARE_SCALE), 0, raw)
         if not valid.any():
             return None
         mem = gdal.GetDriverByName("MEM").Create("", col1 - col0, row1 - row0, 2, gdal.GDT_Float32)
-        mem.SetGeoTransform((west0 + col0 * cell, cell, 0, north0 + row0 * neg, 0, neg))
+        mem.SetGeoTransform((-180 + (grid_col + col0) * cell, cell, 0, 90 + (grid_row + row0) * neg, 0, neg))
         mem.SetProjection(srs)
         mem.GetRasterBand(1).WriteArray(np.where(valid, raw / SHARE_SCALE, 0).astype(np.float32))
         mem.GetRasterBand(2).WriteArray(valid.astype(np.float32))
@@ -573,6 +610,8 @@ def main() -> None:
     parser.add_argument("--google-floor", type=float, default=0.0)
     parser.add_argument("--google-seed", type=float, default=0.0)
     args = parser.parse_args()
+    import yaml
+
     recipe = yaml.safe_load(RECIPE.read_text())
     names = args.names or list(windows())
     if args.command == "fetch":

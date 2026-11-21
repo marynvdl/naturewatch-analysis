@@ -4,7 +4,7 @@ Nothing here knows about cropland. A layer is three functions:
 
   render(z, x, y)        the top-zoom tile as an array, or None when it is empty
   reduce(children)       a parent array from {(dx, dy): array}, or None
-  encode(array) -> bytes the tile as stored in the archive
+  encode(array) -> bytes the tile as stored in the archive; b"" leaves the tile out
   decode(bytes) -> array the inverse, used by the merge to build the low zooms
 
 A shard is one tile at `shard_zoom` and everything under it down to `top_zoom`.
@@ -80,7 +80,8 @@ def build_subtree(
     """Tiles from `root` down to `top_zoom`, appended to entries. Returns the root array or None.
 
     The top zoom is rendered. Every other zoom is reduced from its four children.
-    A tile that is None is left out and counts as nodata for its parent.
+    A tile that is None is left out and counts as nodata for its parent. A tile whose
+    encoding is empty is not stored, but its array still feeds its parent.
     """
     z, x, y = root
     if z == top_zoom:
@@ -94,7 +95,9 @@ def build_subtree(
                     children[(dx, dy)] = child
         values = reduce(children) if children else None
     if values is not None:
-        entries.append((zxy_to_tileid(z, x, y), encode(values)))
+        data = encode(values)
+        if data:
+            entries.append((zxy_to_tileid(z, x, y), data))
     return values
 
 
@@ -230,7 +233,9 @@ def upper_levels(
             values = reduce(children)
             if values is not None:
                 level[(x, y)] = values
-                entries.append((zxy_to_tileid(zoom, x, y), encode(values)))
+                data = encode(values)
+                if data:
+                    entries.append((zxy_to_tileid(zoom, x, y), data))
     entries.sort(key=lambda entry: entry[0])
     return entries
 

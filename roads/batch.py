@@ -33,6 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
+sys.path.append(str(ROOT / "tiles"))  # after roads/, so `tiles` stays roads/tiles.py
 
 
 def _load_sprout_helpers():
@@ -49,6 +50,7 @@ gcs = _load_sprout_helpers()
 
 import blocks  # noqa: E402
 import seed as seedmod  # noqa: E402
+import shards  # noqa: E402  tiles/shards.py: the Batch bootstrap, job spec and pmtiles wheel
 
 TASKS = 20  # the project allows 24 VMs at once in europe-west1
 DUCKDB_VERSION = "2.0.0"
@@ -56,9 +58,8 @@ CONTAINER_PYTHON = "312"  # ghcr.io/osgeo/gdal:ubuntu-small-3.11.4 is Ubuntu 24.
 CODE_FILES = ("roads/batch.py", "roads/blocks.py", "roads/seed.py", "roads/sprout.py", "sprout/cropland.py")
 TILE_CODE_FILES = (
     "roads/blocks.py", "roads/seed.py", "roads/sprout.py", "roads/tiles.py",
-    "tiles/cropland.py", "tiles/global_cropland.py", "tiles/pyramid.py", "tiles/transcode.py",
+    "tiles/cropland.py", "tiles/global_cropland.py", "tiles/pyramid.py", "tiles/shards.py", "tiles/transcode.py",
 )
-PMTILES_VERSION = "3.8.1"
 TILE_PARALLELISM = 12  # 24 E2 CPUs in the region, 2 a machine
 SHAPES = {
     "seed": {
@@ -492,35 +493,6 @@ def make_plan(recipe: dict, kind: str, pilot: str | None) -> dict:
     return {"kind": kind, "groups": blocks.groups(weights, TASKS, minimum), "pilot": False}
 
 
-def bootstrap(prefix: str, wheel: str, code_files=CODE_FILES, plan_name: str = "plan.json") -> str:
-    bucket_path = prefix.removeprefix("gs://").rstrip("/")
-    names = [*code_files, "recipe.json", plan_name, wheel]
-    downloads = "\n".join(f'download("{n}", folder / "{n}")' for n in names)
-    return f"""python3 - << 'PY'
-import json
-import urllib.request
-from pathlib import Path
-request = urllib.request.Request(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    headers={{"Metadata-Flavor": "Google"}},
-)
-token = json.load(urllib.request.urlopen(request))["access_token"]
-
-def download(name, dest):
-    url = "https://storage.googleapis.com/{bucket_path}/code/" + name
-    body = urllib.request.Request(url, headers={{"Authorization": "Bearer " + token}})
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(urllib.request.urlopen(body).read())
-
-folder = Path("/tmp/in")
-{downloads}
-PY
-python3 -c "import zipfile; zipfile.ZipFile('/tmp/in/{wheel}').extractall('/tmp/in/lib')"
-python3 -c "import numpy" 2>/dev/null || (apt-get update -qq && apt-get install -y -qq python3-numpy)
-export PYTHONPATH=/tmp/in/lib
-"""
-
-
 def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool, plan_name: str = "plan.json") -> dict:
     shape = SHAPES[kind]
     if kind == "tiles":
@@ -537,33 +509,8 @@ def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool, plan_
         )
     code_files = TILE_CODE_FILES if kind in ("tiles", "merge") else CODE_FILES
     parallelism = TILE_PARALLELISM if kind == "tiles" else TASKS
-    spec = {
-        "maxRunDuration": f"{shape['max_run_seconds']}s",
-        "maxRetryCount": shape["max_retries"],
-        "lifecyclePolicies": [{"action": "RETRY_TASK", "actionCondition": {"exitCodes": [50001]}}],
-        "computeResource": {"cpuMilli": shape["cpu_milli"], "memoryMib": shape["memory_mib"]},
-        "environment": {"variables": {"CPL_MACHINE_IS_GCE": "YES", gcs.BATCH_ENV: "1", "GDAL_CACHEMAX": "256"}},
-        "runnables": [
-            {"container": {"imageUri": gcs.IMAGE, "entrypoint": "sh", "commands": ["-c", bootstrap(prefix, wheel, code_files, plan_name) + command + "\n"]}}
-        ],
-    }
-    return {
-        "taskGroups": [{"taskCount": str(tasks), "parallelism": str(min(tasks, parallelism)), "taskSpec": spec}],
-        "allocationPolicy": {
-            "instances": [
-                {
-                    "policy": {
-                        "machineType": shape["machine"],
-                        "provisioningModel": "SPOT",
-                        "bootDisk": {"sizeGb": shape["disk_gb"], "type": shape.get("disk_type", "pd-balanced")},
-                    }
-                }
-            ],
-            "location": {"allowedLocations": [f"regions/{gcs.REGION}"]},
-            "serviceAccount": {"email": gcs.SERVICE_ACCOUNT},
-        },
-        "logsPolicy": {"destination": "CLOUD_LOGGING"},
-    }
+    script = shards.bootstrap(prefix, wheel, code_files, plan_name) + command + "\n"
+    return shards.job_spec(shape, script, tasks, parallelism, gcs.BATCH_ENV)
 
 
 def duckdb_wheel(work: Path) -> Path:
@@ -581,16 +528,6 @@ def duckdb_wheel(work: Path) -> Path:
     return found[0]
 
 
-def pmtiles_wheel(work: Path) -> Path:
-    found = list(work.glob(f"pmtiles-{PMTILES_VERSION}-*.whl"))
-    if not found:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "download", f"pmtiles=={PMTILES_VERSION}", "--no-deps", "-d", str(work)], check=True
-        )
-        found = list(work.glob(f"pmtiles-{PMTILES_VERSION}-*.whl"))
-    return found[0]
-
-
 def job_name(recipe: dict, kind: str, pilot: str | None) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
     label = f"-pilot-{pilot.lower().replace('_', '-')}" if pilot else ""
@@ -603,7 +540,7 @@ def command_submit(recipe_path: Path, kind: str, pilot: str | None, approved: bo
     work = ROOT / "data" / "roads" / "batch"
     work.mkdir(parents=True, exist_ok=True)
     tiled = kind in ("tiles", "merge")
-    wheel = pmtiles_wheel(work) if tiled else duckdb_wheel(work)
+    wheel = shards.pmtiles_wheel(work) if tiled else duckdb_wheel(work)
     prefix = scratch(recipe)
     name = job_name(recipe, kind, pilot)
     plan_name = f"{name}.plan.json" if tiled else "plan.json"
