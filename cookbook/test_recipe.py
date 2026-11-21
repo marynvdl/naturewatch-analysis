@@ -32,6 +32,7 @@ def test_the_catalog_lists_the_cropland_and_places_recipes():
         "cropland-2024-v2.yaml",
         "cropland-2024-v3.yaml",
         "cropland-2024.yaml",
+        "places-ecoregions.yaml",
         "places-protected-areas.yaml",
         "places-recognitions.yaml",
         "roads-2026-10-v1.yaml",

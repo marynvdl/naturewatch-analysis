@@ -1,0 +1,31 @@
+# Hand-edited catalog for the ecoregion boundary archive.
+# The Places pipeline reads this recipe. It does not edit it.
+# Geometries come from the app database: the current boundary in
+# public.place_boundaries of each published ecoregion, the terrestrial
+# ecoregions of RESOLVE Ecoregions 2017 (CC BY 4.0) that naturewatch-app
+# Ecoregions task 01 loaded. The app reads this archive from Ecoregions task 04.
+id: places-ecoregions
+title: Ecoregion boundaries
+kind: places
+source:
+  boundaries: current
+  publication_status: published
+  place_type:
+    - ecoregion
+tiles:
+  path: gs://nature-watch-tiles/places/ecoregions/v1/ecoregions.pmtiles
+  layer: ecoregions
+  min_zoom: 0
+  max_zoom: 12
+  scheme: pmtiles
+  # Paint is applied in the client.
+  properties:
+    - id
+    - area_km2
+  # Ecoregions cover the land without gaps, so every one is written from zoom 0.
+  minzoom_by_area_km2:
+    - { area_km2: 0, minzoom: 0 }
+  simplification: 1
+  simplification_max_zoom: 0
+  # Neighbours simplify their shared edge the same way.
+  detect_shared_borders: true

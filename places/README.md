@@ -1,16 +1,18 @@
 # Places
 
-How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the two places archives: protected areas (`cookbook/recipes/places-protected-areas.yaml`) and recognitions (`cookbook/recipes/places-recognitions.yaml`). One script builds both. `--recipe` picks the archive, and the protected areas are the default.
+How the pipelines fit together is [`docs/pipelines.md`](../docs/pipelines.md). This page is the three places archives: protected areas (`cookbook/recipes/places-protected-areas.yaml`), recognitions (`cookbook/recipes/places-recognitions.yaml`), and ecoregions (`cookbook/recipes/places-ecoregions.yaml`). One script builds all three. `--recipe` picks the archive, and the protected areas are the default.
 
-Reads the current boundary of each published place of the recipe's types (`conservation_area`, or the six recognition types) from `place_boundaries`, and writes one PMTiles object with Tippecanoe. Merged and draft places are left out. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
+Reads the current boundary of each published place of the recipe's types (`conservation_area`, the six recognition types, or `ecoregion`) from `place_boundaries`, and writes one PMTiles object with Tippecanoe. Merged and draft places are left out. The recipe is the catalog. This script reads it and does not edit it. There is no GitHub workflow for this step. Colour is applied in the client.
 
 The protected-area archive is `gs://nature-watch-tiles/places/protected-areas/v1/places.pmtiles`. It was built on 31 October 2026 from `places.geom` of every place. Since Database Honing task 07 the script reads the current boundaries of published places instead. App task 09 rebuilds it from the published conservation areas only, after the recognitions moved out, and removes the stale rollback copy `v1/places.previous.pmtiles` (the South Africa build of 29 October) first, so the rollback copy becomes the 31 October global build. Until then the 64 parcels merged by app task 06 still draw as their own shapes, and the recognitions are still in it. Raster tiles stay as they are.
 
 The recognition archive is `gs://nature-watch-tiles/places/recognitions/v1/recognitions.pmtiles`: World Heritage Sites, Ramsar sites, UNESCO-MAB biosphere reserves, Natura 2000 and Emerald sites, and other regional recognitions (app decisions.md, record 21). App task 09 builds it first. The app reads it from task 09b.
 
+The ecoregion archive is `gs://nature-watch-tiles/places/ecoregions/v1/ecoregions.pmtiles`, layer `ecoregions`: the 846 published terrestrial ecoregions of RESOLVE Ecoregions 2017 (app Ecoregions task 01). App Ecoregions task 04 reads it.
+
 ## What a feature contains
 
-The recipe names the vector layer and the properties. `id` and `area_km2` come first, then any of `cropland_percent` and `place_type_id`. The protected-area layer is `places` with `cropland_percent`. The recognition layer is `recognitions` with `place_type_id`, and has no `stats:` block. Each feature carries:
+The recipe names the vector layer and the properties. `id` and `area_km2` come first, then any of `cropland_percent` and `place_type_id`. The protected-area layer is `places` with `cropland_percent`. The recognition layer is `recognitions` with `place_type_id`, and has no `stats:` block. The ecoregion layer is `ecoregions` with `id` and `area_km2` only. Each feature carries:
 
 - `id` — `places.id`
 - `area_km2` — the current boundary's area
@@ -32,6 +34,8 @@ Flags, from `TIPPECANOE_FLAGS` and the protected-area recipe. The recognition re
 -T id:string -T area_km2:float -T cropland_percent:float
 --no-feature-limit --no-tile-size-limit --no-tiny-polygon-reduction --read-parallel --force
 ```
+
+A recipe with `tiles.detect_shared_borders: true` adds `--detect-shared-borders`, so neighbours that share an edge simplify it the same way and a fill shows no slivers. Only the ecoregion recipe sets it. Its one band, 0 km² from zoom 0, writes every ecoregion from zoom 0, because ecoregions cover the land without gaps.
 
 Every place is its own feature carrying `tippecanoe.minzoom` from the recipe bands. No dropping by density, no coalescing, no size cap. `cropland_percent` is left off a feature that has no fact.
 
@@ -92,6 +96,27 @@ Largest tile in bytes (compressed, as stored):
 | Germany and Benelux | 3,016 | 4,420 | 26,818 | 96,479 | 336,916 | 351,694 | **636,038** | 388,810 | 238,611 | 121,601 | 61,745 | 36,765 | 25,257 |
 
 **Finding.** Germany and Benelux has a zoom 6 tile of 636,038 bytes, above the 500 KB mark, and zoom 4 and 5 are near 340 to 350 KB. This is with every place kept and no cap. It is what keeping all places at zoom 6 costs in dense regions. The global archive is likely to have similar or larger tiles. Reported, not reduced.
+
+## Ecoregions, Ecoregions task 03
+
+Cropped laptop proof, 21 November 2026, against the local Supabase stack holding the 846 ecoregions from app Ecoregions task 01: `prove --recipe cookbook/recipes/places-ecoregions.yaml --bbox=29.5,-20.5,31.5,-19.5`. 5 ecoregions, 743,340 vertices. Proof passed at every zoom 0 to 12, with all 5 present from zoom 0. Archive 6,035,246 bytes, wall time 10.6 s, peak memory 689,487,872 bytes.
+
+| Zoom | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Largest tile, bytes | 3,657 | 6,976 | 13,053 | 24,308 | 41,434 | 50,407 | 30,251 | 33,967 | 20,732 | 18,013 | 12,780 | 6,431 | 3,847 |
+
+**Expected cost, before the run.** Hosted, read only: 846 published ecoregions, 180 MB of stored geometry, 13,974,327 vertices, all valid. That is about 19 times the proof window, and well under the recognitions' 11,480 places.
+
+| Item | Estimate |
+| --- | --- |
+| Database read from the Batch job | about 180 MB |
+| Archive | about 100 to 200 MB |
+| Batch run | 5 to 15 minutes on spot `e2-standard-8`, `europe-west1`, `maxRunDuration` 7,200 s, one retry |
+| Peak memory | a few GiB, inside the 32 GiB machine |
+| Machine time | about $0.02, plus cents of disk and logging |
+| Storage | under $0.01 a month |
+
+The image of 31 October is reused. The job downloads the script and the recipe from `gs://nature-watch-bucket/scratch/places/ecoregions/`, so no image is built or pushed. The object is new, so there is no `--replace` and no rollback copy. These are my estimates, not a quote.
 
 ## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
 

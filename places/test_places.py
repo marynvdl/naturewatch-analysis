@@ -26,6 +26,8 @@ RECIPE_PATH = Path(__file__).resolve().parents[1] / "cookbook" / "recipes" / "pl
 RECIPE = json.loads(json.dumps(yaml.safe_load(RECIPE_PATH.read_text())))
 RECOGNITIONS_PATH = RECIPE_PATH.with_name("places-recognitions.yaml")
 RECOGNITIONS = json.loads(json.dumps(yaml.safe_load(RECOGNITIONS_PATH.read_text())))
+ECOREGIONS_PATH = RECIPE_PATH.with_name("places-ecoregions.yaml")
+ECOREGIONS = json.loads(json.dumps(yaml.safe_load(ECOREGIONS_PATH.read_text())))
 SCRIPT = Path(places.__file__)
 
 
@@ -405,3 +407,44 @@ def test_the_recognitions_archive_copies_the_type(tmp_path):
     assert copied[large]["place_type_id"] == "world_heritage_site"
     assert copied[small]["place_type_id"] == "natura_2000_site"
     assert copied[large]["cropland_percent"] is None
+
+
+def test_the_ecoregions_recipe_names_its_own_archive_and_type():
+    contract = places.places_contract(ECOREGIONS)
+    assert contract["path"] == "gs://nature-watch-tiles/places/ecoregions/v1/ecoregions.pmtiles"
+    assert contract["layer"] == "ecoregions"
+    assert contract["properties"] == ("id", "area_km2")
+    assert contract["place_types"] == ["ecoregion"]
+    assert contract["max_zoom"] == 12
+    assert contract["crops_stat_id"] is None
+    assert contract["detect_shared_borders"] is True
+    assert places.scratch_prefix(ECOREGIONS) == "gs://nature-watch-bucket/scratch/places/ecoregions/"
+    assert places.default_dest(ECOREGIONS).parts[-2:] == ("ecoregions", "ecoregions.pmtiles")
+
+
+def test_every_ecoregion_is_written_from_zoom_0(tmp_path):
+    source = tmp_path / "ecoregions.geojson"
+    write_geojson(source, sample_places())
+    for place in places.places_from_file(source):
+        line = json.loads(places.feature_line(place, ECOREGIONS))
+        assert line["tippecanoe"] == {"minzoom": 0}
+        assert set(line["properties"]) == {"id", "area_km2"}
+    bands = places.places_contract(ECOREGIONS)["minzoom_by_area_km2"]
+    assert places.minzoom_for_area(6.04, bands) == 0
+
+
+def test_only_the_ecoregions_detect_shared_borders():
+    command = places.tippecanoe_command(Path("in.ndjson"), Path("out.pmtiles"), ECOREGIONS)
+    assert "--detect-shared-borders" in command
+    assert command[command.index("-l") + 1] == "ecoregions"
+    for recipe in (RECIPE, RECOGNITIONS):
+        command = places.tippecanoe_command(Path("in.ndjson"), Path("out.pmtiles"), recipe)
+        assert "--detect-shared-borders" not in command
+        assert command[-1 - len(places.TIPPECANOE_FLAGS) : -1] == list(places.TIPPECANOE_FLAGS)
+
+
+def test_detect_shared_borders_must_be_a_boolean():
+    recipe = json.loads(json.dumps(ECOREGIONS))
+    recipe["tiles"]["detect_shared_borders"] = "yes"
+    with pytest.raises(ValueError, match="detect_shared_borders"):
+        places.places_contract(recipe)
