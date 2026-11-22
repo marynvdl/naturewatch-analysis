@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build a places PMTiles archive from the app database.
 
-The recipe is the catalog. This script reads it and does not edit it. Two
-recipes use it: the protected areas (places-protected-areas.yaml) and the
-recognitions (places-recognitions.yaml).
+The recipe is the catalog. This script reads it and does not edit it. Three
+recipes use it: the protected areas (places-protected-areas.yaml), the
+recognitions (places-recognitions.yaml), and the ecoregions
+(places-ecoregions.yaml).
 Each feature is the current boundary of a published place of the recipe's
 types. It carries the properties the recipe lists: places.id, the boundary's
 area_km2, and, when listed, the cropland percent from place_stats_preferred
@@ -130,6 +131,9 @@ def places_contract(recipe: dict) -> dict:
     bands = tiles.get("minzoom_by_area_km2") or []
     if not bands:
         problems.append("tiles.minzoom_by_area_km2 is missing")
+    shared_borders = tiles.get("detect_shared_borders", False)
+    if not isinstance(shared_borders, bool):
+        problems.append("tiles.detect_shared_borders must be true or false")
     source = recipe.get("source") or {}
     if source.get("boundaries") != "current" or source.get("publication_status") != "published":
         problems.append("source must be the current boundaries of published places")
@@ -152,6 +156,7 @@ def places_contract(recipe: dict) -> dict:
         "min_zoom": 0,
         "max_zoom": max_zoom,
         "simplification": float(tiles.get("simplification", 1)),
+        "detect_shared_borders": shared_borders is True,
         "minzoom_by_area_km2": [
             (float(band["area_km2"]), int(band["minzoom"])) for band in bands
         ],
@@ -398,6 +403,8 @@ def tippecanoe_command(source: Path, dest: Path, recipe: dict) -> list[str]:
         *[flag for name in contract["properties"] for flag in ("-y", name)],
         *[flag for name in contract["properties"] for flag in ("-T", f"{name}:{PROPERTY_TYPES[name]}")],
         *TIPPECANOE_FLAGS,
+        # Neighbours that share an edge simplify it the same way, so a fill shows no slivers.
+        *(["--detect-shared-borders"] if contract["detect_shared_borders"] else []),
         str(source),
     ]
 
