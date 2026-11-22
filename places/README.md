@@ -128,9 +128,29 @@ Cause: an island ecoregion smaller than a zoom 0 tile unit (360° / 4,096, about
 
 Fix, chosen by the user: the 11 ecoregions under 30 km² start at zoom 1. With that band the same 100 passed the proof: 89 at zoom 0, all 100 from zoom 1 to 12, 8.2 s, 475 MB peak.
 
-**Resubmitted 21 November 2026, 19:28 UTC**, with the zoom 1 band. Job `places-places-ecoregions-20261121192845`. Status: `gcloud batch jobs describe places-places-ecoregions-20261121192845 --location=europe-west1 --project=nature-watch-387210`. Cancel: `gcloud batch jobs delete places-places-ecoregions-20261121192845 --location=europe-west1 --project=nature-watch-387210`.
+**Resubmitted 21 November 2026, 19:28 UTC**, with the zoom 1 band. Job `places-places-ecoregions-20261121192845`. Status: `gcloud batch jobs describe places-places-ecoregions-20261121192845 --location=europe-west1 --project=nature-watch-387210`.
 
-Result: not yet recorded.
+**Result: SUCCEEDED**, 19:29 to 20:03 UTC, no retry. Proof passed at every zoom 0 to 12. `Cache-Control: no-cache`, and the range request answered 206, in the job and again from the laptop.
+
+| Measure | Ecoregions |
+| --- | --- |
+| Places | 846 |
+| Present at zoom 0 | 835. The 11 under 30 km² are present from zoom 1 |
+| Present from zoom 1 | all 846 |
+| Bytes stored | 284,352,541 (271 MiB) |
+| Batch run duration | 2,044 s |
+| Script wall time | 2,037 s |
+| Peak memory | 1,501,011,968 bytes (1.4 GiB) |
+
+Largest tile in bytes (compressed, as stored):
+
+| Zoom | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Ecoregions | 227,300 | 150,360 | 148,807 | 123,870 | 124,819 | 111,091 | 117,593 | 107,013 | 58,947 | 31,031 | 36,793 | 36,886 | 21,876 |
+
+Every tile is under 250 KB.
+
+**Cost.** About 34 minutes on spot `e2-standard-8`, roughly $0.06 at my estimate of $0.10 an hour, plus the failed job's 68 minutes, roughly $0.11: about $0.17 together, plus cents of disk and logging. This is an estimate, not a bill. Storage is 284 MB, under $0.01 a month. The two jobs read about 180 MB from the database three times.
 
 ## Hosted runs, submitted 12 November 2026 (Database Honing task 09)
 
