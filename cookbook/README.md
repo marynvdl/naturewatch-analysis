@@ -123,3 +123,28 @@ How the ranges were made:
 - Spot prices are about $0.03–0.04 an hour for `e2-standard-2` and four times that for `e2-standard-8`. The submit step checks the current price.
 
 One-off compute is about $0.5–1.5. The seed is most of the storage. Overture does not keep every release in its public bucket, so the seed is what keeps this snapshot rebuildable. The user chose on 17 November 2026 to keep the whole seed, `id` included.
+
+## power-lines-2026-10-v1 and power-sites-2026-10-v1
+
+`recipes/power-lines-2026-10-v1.yaml` and `recipes/power-sites-2026-10-v1.yaml` name the Energy layer's seed, sprouts and tiles from Overture release `2026-10-21.0`. They share one seed of every `base/infrastructure` subtype. The rules, the Global Renewables Watch comparison and the sample figures are in [`energy/README.md`](../energy/README.md).
+
+### Expected cost, written 27 November 2026 before any job
+
+Scaled from the task 01 sample. The footers (`energy/seed.py footers`) give 158,979,260 infrastructure rows in 16 files and 4,608 row groups, 13,888,744,176 compressed bytes. A footer has no subtype counts, and the rows are not sorted by subtype, so the share that is power comes from the windows: 16% of rows in Gironde and 86% in the Karoo, with 4.8% and 20% in the kept classes. Reading Overture costs this project nothing, as for roads. Storage is $0.023 per GB a month.
+
+| Step | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Seed (task 02) | DuckDB reads the theme once, 13.9 GB, and writes GeoParquet split by 10° block, as roads | spot `e2-standard-4`, 1–2 task-hours | about $0.05–0.20 | about 13 GB (the window seeds are 94% of the raw read) | about $0.30 |
+| Sprouts (task 02) | burn `power-lines` and `power-sites` per 10° block, with VRTs and STAC | spot `e2-highmem-2`, 5–15 task-hours | about $0.20–0.60 | 0.3–1.3 GB | under $0.03 |
+| Power-lines tiles (task 03) | the roads shard and merge flow, top zoom 11 | spot `e2-standard-2` shards, 5–12 task-hours, plus a merge | about $0.25–0.60 | 0.5–1.5 GB | about $0.01–0.03 |
+| Power-sites tiles (task 03) | write the kept sites from the seed, then one Tippecanoe run | one spot `e2-highmem-4`, 1–3 hours | about $0.05–0.20 | 0.5–2.5 GB | about $0.01–0.06 |
+
+How the ranges were made:
+
+- **Seed.** The roads seed read 72 GB and 353 million rows in about 3 task-hours with start-up. This theme is a fifth of the bytes and less than half the rows.
+- **Kept power features.** 159 million rows at 5–20% kept gives 8–32 million lines and sites. Roads had 307 million.
+- **Sprouts.** A block's time is mostly its 40,000 × 40,000-cell array, not its features. About 250–350 blocks have power features. At 30–90 s a block for each sprout, that is 5–15 task-hours. The windows store 1.1 bytes a line cell and 1.2–3.2 bytes a site cell.
+- **Power-lines tiles.** Roads took 16.6 task-hours for 4.0 billion road cells. Lines have far fewer cells, but they cross many tiles thinly, and a tile's cost is mostly its warps, so the time is taken as a third to two thirds of the roads run. The windows store 1.8 bytes a line cell in the archive.
+- **Power-sites tiles.** 1–4 million sites at 330–580 bytes each in the windows' archives.
+
+One-off compute is about $0.55–1.6. The seed is most of the storage, about $0.35–0.40 a month in all. A column read of `subtype` and `class` from a few files in the task 02 pilot would narrow the kept share before the full run.

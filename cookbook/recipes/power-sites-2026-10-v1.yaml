@@ -1,0 +1,78 @@
+# Hand-edited catalog for power sites, part of the Energy layer (task 01 of the Energy parcel in naturewatch-app).
+# Plants, generators and substations from OpenStreetMap through Overture: a sprout on the stats grid and vector PMTiles.
+# The measurements behind the rules, the Global Renewables Watch comparison and the tile choice are in energy/README.md.
+# Approved by the user on 27 November 2026. energy/rules.py reads the rules below.
+id: power-sites-2026-10-v1
+title: Overture power sites, release 2026-10-21.0
+source:
+  name: Overture Maps base, infrastructure (OpenStreetMap)
+  url: https://docs.overturemaps.org/guides/base/
+  release: 2026-10-21.0
+  path: s3://overturemaps-us-west-2/release/2026-10-21.0/theme=base/type=infrastructure/*.parquet
+  s3_region: us-west-2
+  licence: ODbL-1.0
+  attribution: © OpenStreetMap contributors, Overture Maps Foundation
+period: {start: 2026-10-21, end: 2026-10-21}
+extent: global
+grid:
+  crs: EPSG:4326
+  pixel_size_deg: 0.00025
+  origin: [-180, 90]
+  dtype: uint8
+sites:
+  subtype: power
+  # plant: kept, group from `plant:source`.
+  # generator: group from `generator:source`. Dropped on a roof (`generator:location` or `location` roof or rooftop),
+  #   as a polygon under min_generator_m2, and as a solar point. Other points are kept: a turbine marks its cell.
+  # substation: a polygon from min_substation_m2. Points are dropped.
+  classes: [plant, generator, substation]
+  min_generator_m2: 1000
+  min_substation_m2: 100
+  roof: [roof, rooftop]
+  # A site with several sources takes the first group in this order, so the dirtiest wins. An unknown source is other.
+  group_order: [coal, fossil, nuclear, bio_waste, hydro, wind, solar, other, storage]
+  sources:
+    coal: [coal, lignite]
+    fossil: [gas, oil, diesel, gasoline, fossil]
+    nuclear: [nuclear]
+    bio_waste: [biomass, biogas, biofuel, waste]
+    hydro: [hydro, tidal, wave]
+    wind: [wind]
+    solar: [solar]
+    storage: [battery]
+  # The feature card: these seed values are kept on every site in the tiles.
+  card:
+    name: name
+    operator: source_tags['operator']
+    source: coalesce(source_tags['plant:source'], source_tags['generator:source'])
+    method: coalesce(source_tags['plant:method'], source_tags['generator:method'])
+    output: coalesce(source_tags['plant:output:electricity'], source_tags['generator:output:electricity'])
+    voltage: source_tags['voltage']
+    start_date: source_tags['start_date']
+    osm_id: osm_id
+seed:
+  id: seed-infrastructure-overture-2026-10-21
+  path: gs://nature-watch-bucket/seeds/infrastructure/overture/2026-10-21.0/
+  # The seed of power-lines-2026-10-v1.
+  format: geoparquet
+sprout:
+  id: power-sites-2026-10-v1
+  path: gs://nature-watch-bucket/sprouts/power-sites/2026-10/v1/
+  # A polygon marks the cells whose centre it holds. A point marks the cell it falls in. The highest value wins.
+  burn: cell_centre
+  nodata: none
+  compression: {method: deflate, level: 6, predictor: none, blocksize: 512}
+  bands:
+    source: {0: none, 1: substation, 2: storage, 3: other, 4: solar, 5: wind, 6: hydro, 7: bio_waste, 8: nuclear, 9: fossil, 10: coal}
+tiles:
+  path: gs://nature-watch-tiles/energy/2026-10/v1/power-sites.pmtiles
+  scheme: pmtiles
+  format: mvt
+  layer: sites
+  min_zoom: 2
+  max_zoom: 14
+  # To point_max_zoom each site is a point inside it, for the client's heatmap; from the next zoom, its shape.
+  # Crowded points merge (Tippecanoe --cluster-densest-as-needed, cluster_distance px), keeping point_count and summing
+  # area_m2 and, per group g, area_<g> and n_<g>. The heatmap's colours and weights are set in the client.
+  point_max_zoom: 9
+  cluster_distance: 12
