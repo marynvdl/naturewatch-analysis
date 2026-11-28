@@ -79,6 +79,26 @@ python places/protected_areas.py submit --replace   # starts a Batch job: needs 
 
 Batch deletes the virtual machine when the task ends. Cancel with `gcloud batch jobs delete <job-id> --location=europe-west1 --project=nature-watch-387210`. `submit` prints the job id, the status command, and the cancel command.
 
+## Rebuild after admin changes
+
+Admins change places in the app: they hide a place, show it again, or approve a replacement boundary (app Shaping Boundaries task 05). The archives change only when rebuilt, so the map lags. Until then the app leaves hidden places out of what it draws. It cannot draw a new boundary, or a place shown again after a rebuild left it out.
+
+Rebuilds are started by hand, per batch of changes, after approval. There is no schedule. Rebuild only the archives whose places changed: `conservation_area` places are in protected areas, the six recognition types in recognitions, and ecoregions in ecoregions.
+
+1. Delete the old rollback copy `v1/places.previous.pmtiles` of each archive to rebuild, if it exists, so that `--replace` keeps the archive now published as the new rollback copy. Deleting it needs approval too.
+2. Run `submit --replace` for each, with `--recipe` for recognitions or ecoregions. It starts a Batch job.
+3. Record the job ids, the result, and the cost in this file, as the runs below are.
+
+Expected cost per rebuild, from the runs below, on spot `e2-standard-8` in `europe-west1`:
+
+| Archive | Batch time | Machine time | Database read |
+| --- | --- | --- | --- |
+| Protected areas | about 26 min | about $0.04 | about 3.3 GB for these two together |
+| Recognitions | about 12 min | about $0.02 | |
+| Ecoregions | about 34 min | about $0.06 | about 180 MB |
+
+Plus cents of disk and logging. Each rollback copy is the size of its archive, about $0.01 a month. These are estimates, not a bill. The database read leaves the database host, so check it against the plan's egress allowance.
+
 ## Cropped samples, 31 October 2026
 
 Laptop only, Tippecanoe 2.79.0, flags above. Reading the database from the laptop dominated the Benelux wall time.
