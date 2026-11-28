@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import yaml
 from osgeo import gdal
 
 HERE = Path(__file__).parent
@@ -35,8 +34,8 @@ import sprout as roads_sprout  # noqa: E402  roads/sprout.py: grid snapping, COG
 gdal.UseExceptions()
 
 DATA = HERE.parent / "data" / "energy"
-_lines_recipe = yaml.safe_load(rules.LINES_RECIPE.read_text())
-_sites_recipe = yaml.safe_load(rules.SITES_RECIPE.read_text())
+_lines_recipe = rules.LINES
+_sites_recipe = rules.SITES
 PIXEL = _lines_recipe["grid"]["pixel_size_deg"]
 ORIGIN = tuple(_lines_recipe["grid"]["origin"])
 RELEASE = str(_lines_recipe["source"]["release"])
@@ -60,8 +59,11 @@ def lines_query(source: str) -> str:
     """
 
 
-def sites_query(source: str) -> str:
-    """Kept sites with their group, value, area and card attributes, in burn order."""
+def sites_query(source: str, burn: bool = False) -> str:
+    """Kept sites with their group, value, area and card attributes, in burn order.
+
+    With `burn`, only the sites that mark cells: a wind plant polygon stays in the tiles but its turbines mark the sprout.
+    """
     card = ", ".join(f"{sql} AS {key}" for key, sql in CARD.items())
     return f"""
         WITH s AS (
@@ -75,7 +77,7 @@ def sites_query(source: str) -> str:
         )
         SELECT id, class, site_group, {rules.site_value_sql()} AS value, round(area_m2) AS area_m2,
                {', '.join(CARD)}, geometry
-        FROM g WHERE site_group IS NOT NULL ORDER BY value, id
+        FROM g WHERE site_group IS NOT NULL{f" AND {rules.burned_sql()}" if burn else ""} ORDER BY value, id
     """
 
 
@@ -112,25 +114,48 @@ def burn_file(con, query: str, value: str, dest: Path, point_as_cell: bool) -> i
     return int(count)
 
 
-def burn(source: Path, bounds, all_touched: bool) -> np.ndarray:
+def grid_dataset(bounds):
+    """A MEM byte band over bounds on the sprout grid, filled with 0."""
     west, north, cols, rows = roads_sprout.snapped(bounds, PIXEL, ORIGIN)
     target = gdal.GetDriverByName("MEM").Create("", cols, rows, 1, gdal.GDT_Byte)
     target.SetGeoTransform((west, PIXEL, 0, north, 0, -PIXEL))
     target.SetProjection("EPSG:4326")
     target.GetRasterBand(1).Fill(0)
+    return target
+
+
+def burn_dataset(source: Path, bounds, all_touched: bool):
+    target = grid_dataset(bounds)
     vector = gdal.OpenEx(str(source), gdal.OF_VECTOR)
     gdal.Rasterize(target, vector, options=gdal.RasterizeOptions(
         layers=[vector.GetLayer(0).GetName()], attribute="value", allTouched=all_touched))
-    return target.GetRasterBand(1).ReadAsArray()
+    vector = None
+    return target
 
 
-def write_cog(values: np.ndarray, bounds, layer: str, dest: Path) -> int:
-    west, north, cols, rows = roads_sprout.snapped(bounds, PIXEL, ORIGIN)
-    mem = gdal.GetDriverByName("MEM").Create("", cols, rows, 1, gdal.GDT_Byte)
-    mem.SetGeoTransform((west, PIXEL, 0, north, 0, -PIXEL))
-    mem.SetProjection("EPSG:4326")
+def burn(source: Path, bounds, all_touched: bool) -> np.ndarray:
+    mem = burn_dataset(source, bounds, all_touched)
+    return mem.GetRasterBand(1).ReadAsArray()
+
+
+def histogram(mem) -> np.ndarray:
+    """Cells per value, a strip at a time, so a 40,000-cell block is never copied whole."""
     band = mem.GetRasterBand(1)
-    band.WriteArray(values)
+    cols, rows = mem.RasterXSize, mem.RasterYSize
+    out = np.zeros(256, np.int64)
+    for top in range(0, rows, roads_sprout.STRIP_ROWS):
+        out += np.bincount(band.ReadAsArray(0, top, cols, min(roads_sprout.STRIP_ROWS, rows - top)).ravel(), minlength=256)
+    return out
+
+
+def write_cog(values, bounds, layer: str, dest: Path) -> int:
+    """`values` is an array over bounds, or a grid_dataset already burned."""
+    if isinstance(values, np.ndarray):
+        mem = grid_dataset(bounds)
+        mem.GetRasterBand(1).WriteArray(values)
+    else:
+        mem = values
+    band = mem.GetRasterBand(1)
     band.SetDescription(LAYERS[layer]["band"])
     band.SetMetadataItem("values", json.dumps({str(k): v for k, v in LAYERS[layer]["values"].items()}))
     mem.SetMetadataItem("version", LAYERS[layer]["id"])
@@ -140,6 +165,51 @@ def write_cog(values: np.ndarray, bounds, layer: str, dest: Path) -> int:
     return dest.stat().st_size
 
 
+def bbox_source(paths: list[str], bounds) -> str:
+    """The seed rows from `paths` whose bbox reaches into bounds, padded by one cell."""
+    west, south, east, north = bounds
+    files = ", ".join(f"'{p}'" for p in paths)
+    return (
+        f"(SELECT * FROM read_parquet([{files}]) WHERE subtype = 'power' "
+        f"AND bbox.xmin <= {east + PIXEL} AND bbox.xmax >= {west - PIXEL} "
+        f"AND bbox.ymin <= {north + PIXEL} AND bbox.ymax >= {south - PIXEL})"
+    )
+
+
+def burn_block(con, paths: list[str], bounds, work: Path, write) -> dict[str, dict]:
+    """Both sprouts for one block from the seed files of it and its neighbours.
+
+    `write(layer, local)` stores a COG; a layer with no marked cell writes none. Returns a record per layer.
+    """
+    out = {}
+    source = bbox_source(paths, bounds)
+    for layer, query, all_touched in (
+        ("power-lines", lines_query(source), True),
+        ("power-sites", sites_query(source, burn=True), False),
+    ):
+        started = time.perf_counter()
+        fgb = work / f"{layer}.fgb"
+        value = "voltage" if layer == "power-lines" else "value"
+        features = burn_file(con, query, value, fgb, point_as_cell=layer == "power-sites")
+        record = {"features": features, "marked_cells": 0, "by_value": {}, "bytes": 0}
+        if features:
+            mem = burn_dataset(fgb, bounds, all_touched)
+            counts = histogram(mem)
+            record["marked_cells"] = int(counts[1:].sum())
+            record["by_value"] = {LAYERS[layer]["values"].get(v, LAYERS[layer]["values"].get(str(v), str(v))): int(counts[v])
+                                  for v in range(1, 256) if counts[v]}
+            if record["marked_cells"]:
+                local = work / f"{layer}.tif"
+                record["bytes"] = write_cog(mem, bounds, layer, local)
+                write(layer, local)
+                local.unlink()
+            mem = None
+        fgb.unlink(missing_ok=True)
+        record["seconds"] = round(time.perf_counter() - started, 1)
+        out[layer] = record
+    return out
+
+
 def command_window(name: str, bounds) -> list[dict]:
     con = roads_seed.connect()
     con.execute("SET geometry_always_xy = true")
@@ -147,7 +217,7 @@ def command_window(name: str, bounds) -> list[dict]:
     records = []
     for layer, query, all_touched in (
         ("power-lines", lines_query(source), True),
-        ("power-sites", sites_query(source), False),
+        ("power-sites", sites_query(source, burn=True), False),
     ):
         started = time.perf_counter()
         work = DATA / "work" / f"{layer}-{name}.fgb"
@@ -173,6 +243,8 @@ def main() -> None:
     parser.add_argument("command", choices=("window", "sites"))
     parser.add_argument("name")
     args = parser.parse_args()
+    import yaml
+
     boxes = {b["name"]: b for b in yaml.safe_load((HERE / "boxes.yaml").read_text())["boxes"]}
     if args.command == "window":
         command_window(args.name, tuple(boxes[args.name]["bounds"]))

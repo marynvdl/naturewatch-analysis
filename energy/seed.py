@@ -85,6 +85,34 @@ def write_seed(name: str) -> dict:
     return record
 
 
+def block_query(source: str, block_bounds) -> str:
+    """The global seed rows of one 10° block: every infrastructure row whose bbox centre is in it, as roads."""
+    centre, order = roads_seed.centre_filter(block_bounds)
+    return f"""
+        {SEED_SELECT} FROM {source}
+        WHERE {bbox_where(block_bounds)} AND {centre}
+        ORDER BY {order}
+    """
+
+
+def write_block(con, source: str, block_bounds, dest: Path) -> dict:
+    """One block's seed at dest, and its rows by subtype and power class. No file when there is no row."""
+    started = time.perf_counter()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    con.execute(f"COPY ({block_query(source, block_bounds)}) TO '{dest}' (FORMAT parquet, COMPRESSION zstd)")
+    seconds = time.perf_counter() - started
+    src = f"read_parquet('{dest}')"
+    by_subtype = dict(con.execute(f"SELECT coalesce(subtype, ''), count(*) FROM {src} GROUP BY 1 ORDER BY 1").fetchall())
+    power = dict(con.execute(f"SELECT class, count(*) FROM {src} WHERE subtype = 'power' GROUP BY 1 ORDER BY 1").fetchall())
+    rows = int(sum(by_subtype.values()))
+    stored = dest.stat().st_size
+    if rows == 0:
+        dest.unlink()
+        stored = 0
+    return {"rows": rows, "bytes": stored, "seconds": round(seconds, 1),
+            "by_subtype": {k: int(v) for k, v in by_subtype.items()}, "power_classes": {k: int(v) for k, v in power.items()}}
+
+
 def connect():
     con = roads_seed.connect()
     con.execute(f"SET s3_region='{SOURCE['s3_region']}'")

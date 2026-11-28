@@ -50,7 +50,9 @@ gcs = _load_sprout_helpers()
 
 import blocks  # noqa: E402
 import seed as seedmod  # noqa: E402
-import shards  # noqa: E402  tiles/shards.py: the Batch bootstrap, job spec and pmtiles wheel
+
+# tiles/shards.py (the Batch bootstrap, job spec and pmtiles wheel) is imported where a job is built: it needs
+# pmtiles, which a seed or sprout task does not install.
 
 TASKS = 20  # the project allows 24 VMs at once in europe-west1
 DUCKDB_VERSION = "2.0.0"
@@ -285,15 +287,15 @@ def run_sprout(recipe: dict, plan: dict, work: Path, pilot: bool) -> None:
 # ---- collect -------------------------------------------------------------------------
 
 
-def vrt_text(recipe: dict, records: list[dict]) -> str:
-    """Two bands over the global grid. No nodata: a block without a COG reads 0."""
+def vrt_text(recipe: dict, records: list[dict], bands_named=("level", "surface")) -> str:
+    """The sprout bands over the global grid. No nodata: a block without a COG reads 0."""
     pixel = recipe["grid"]["pixel_size_deg"]
     west, north = recipe["grid"]["origin"]
     width = round(360 / pixel)
     height = round(180 / pixel)
     srs = gcs.srs_wkt(recipe["grid"]["crs"])
     bands = []
-    for index, label in enumerate(("level", "surface"), start=1):
+    for index, label in enumerate(bands_named, start=1):
         sources = []
         for record in records:
             if not record["bytes"]:
@@ -328,7 +330,7 @@ def vrt_text(recipe: dict, records: list[dict]) -> str:
 """
 
 
-def stac_documents(recipe: dict, records: list[dict]) -> tuple[dict, dict]:
+def stac_documents(recipe: dict, records: list[dict], bands_named=("level", "surface")) -> tuple[dict, dict]:
     sprout_path = recipe["sprout"]["path"]
     vrt_name = f"{stem(recipe)}.vrt"
     item_name = f"{recipe['sprout']['id']}.json"
@@ -337,7 +339,7 @@ def stac_documents(recipe: dict, records: list[dict]) -> tuple[dict, dict]:
     links = [{"rel": "root", "href": "./collection.json", "type": "application/json"}]
     classes = {
         label: [{"value": int(k), "name": v} for k, v in recipe["sprout"]["bands"][label].items()]
-        for label in ("level", "surface")
+        for label in bands_named
     }
     collection = {
         "stac_version": "1.0.0",
@@ -381,7 +383,7 @@ def stac_documents(recipe: dict, records: list[dict]) -> tuple[dict, dict]:
                         "spatial_resolution": float(recipe["grid"]["pixel_size_deg"]),
                         "classification:classes": classes[label],
                     }
-                    for label in ("level", "surface")
+                    for label in bands_named
                 ],
             },
             **{
@@ -494,6 +496,8 @@ def make_plan(recipe: dict, kind: str, pilot: str | None) -> dict:
 
 
 def batch_job(prefix: str, kind: str, tasks: int, wheel: str, pilot: bool, plan_name: str = "plan.json") -> dict:
+    import shards
+
     shape = SHAPES[kind]
     if kind == "tiles":
         command = f"python3 /tmp/in/roads/tiles.py shard --recipe /tmp/in/recipe.json --plan /tmp/in/{plan_name} --work /tmp/work"
@@ -539,6 +543,8 @@ def command_submit(recipe_path: Path, kind: str, pilot: str | None, approved: bo
     plan = make_plan(recipe, kind, pilot)
     work = ROOT / "data" / "roads" / "batch"
     work.mkdir(parents=True, exist_ok=True)
+    import shards
+
     tiled = kind in ("tiles", "merge")
     wheel = shards.pmtiles_wheel(work) if tiled else duckdb_wheel(work)
     prefix = scratch(recipe)
