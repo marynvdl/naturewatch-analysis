@@ -119,19 +119,25 @@ def block_query(source: str, rules: dict, block_bounds: tuple[float, float, floa
     A centre on the east or north edge belongs to the next block, except at 180° and 90°.
     Rows are sorted along a Hilbert curve so a reader can skip row groups by bbox.
     """
+    centre, order = centre_filter(block_bounds)
+    rows = seed_query(source, rules, block_bounds)
+    return f"""
+        SELECT * FROM ({rows}) AS r
+        WHERE {centre}
+        ORDER BY {order}
+    """
+
+
+def centre_filter(block_bounds: tuple[float, float, float, float]) -> tuple[str, str]:
+    """The SQL test that a row's bbox centre is in the block, and the Hilbert order inside it."""
     west, south, east, north = block_bounds
     cx = "((bbox.xmin + bbox.xmax) / 2)"
     cy = "((bbox.ymin + bbox.ymax) / 2)"
     east_test = f"{cx} <= {east}" if east >= 180 else f"{cx} < {east}"
     north_test = f"{cy} <= {north}" if north >= 90 else f"{cy} < {north}"
     centre = f"{cx} >= {west} AND {east_test} AND {cy} >= {south} AND {north_test}"
-    rows = seed_query(source, rules, block_bounds)
     box = f"{{'min_x': {west}, 'min_y': {south}, 'max_x': {east}, 'max_y': {north}}}::BOX_2D"
-    return f"""
-        SELECT * FROM ({rows}) AS r
-        WHERE {centre}
-        ORDER BY ST_Hilbert({cx}, {cy}, {box}), id
-    """
+    return centre, f"ST_Hilbert({cx}, {cy}, {box}), id"
 
 
 def write_block(con, recipe: dict, block_bounds, dest: Path) -> dict:

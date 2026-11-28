@@ -22,6 +22,19 @@ MAPBOX_ACCESS_TOKEN=pk... python energy/preview.py   # http://127.0.0.1:8766/pre
 python -m pytest energy
 ```
 
+The global runs are Batch jobs in `europe-west1`, as roads (`roads/batch.py`), with the helpers reused:
+
+```bash
+python energy/batch.py submit seed --pilot 40N_000E [--approved]    # one block; prints the job, submits only with --approved
+python energy/batch.py submit sprout --pilot 40N_000E [--approved]  # both sprouts for one block, to the scratch prefix
+python energy/batch.py submit seed --approved                       # every block, at most 20 tasks
+python energy/batch.py submit sprout --approved                     # after every seed block has a record
+python energy/batch.py collect                                      # both VRTs and STAC files
+python energy/batch.py records seed|sprout [--pilot]                # totals from the records so far
+```
+
+A seed block holds every infrastructure row whose bbox centre is in it, and its record counts rows by subtype and power class. One sprout task writes both sprouts for a block, from the power rows of its seed and its eight neighbours' whose bbox reaches into it, so a site across a block edge marks both sides with the group from its whole shape. One record per block, beside the `power-lines` blocks, holds both layers. The container has no PyYAML, so a task reads JSON copies of the two recipes.
+
 `boxes.yaml` names the two 2° windows: `karoo` (22.3–24.3°E, 32.6–30.6°S: Beaufort West, Karoo National Park, De Aar) and `gironde` (1.5°W–0.5°E, 43.8–45.8°N: Bordeaux, the Landes, Cestas). Overture is read with DuckDB from its public bucket, only the row groups whose bbox meets the window. Global Renewables Watch v1.0 is read from its two GeoPackages in `data/energy/grw/`. Imagery is Esri World Imagery, cached in `data/energy/imagery/`.
 
 ## Method
@@ -109,3 +122,41 @@ A burn holds the 64 million-cell window in memory. The tile builds take under 6 
 - **Sites zoomed out.** Five views were compared in `preview.py`: points with the densest dropped, clusters with a count, points by size, a heatmap, and the footprint as a raster share. The user chose the heatmap. Its colours, radius, intensity, opacity and weight are paint only. The preview offers five palettes, and a weight of √area with each site at least 1 ha.
 
 Renders are in `data/energy/renders/` (not committed).
+
+## Task 02 runs (28 November 2026)
+
+**Seed pilot, `40N_000E`.** The first submission, `energy-2026-10-seed-pilot-40n-000e-202611280936`, failed at start-up: `roads/batch.py` imported `tiles/shards.py`, which needs `pmtiles`, at the top. It now imports it only where a job is built. Resubmitted at 09:41 UTC as `energy-2026-10-seed-pilot-40n-000e-202611280940`: one spot `e2-standard-4`, 50 GB disk. It writes `gs://nature-watch-bucket/seeds/infrastructure/overture/2026-10-21.0/40N_000E.parquet` and `.json`, as the full run would.
+
+```bash
+gcloud batch jobs describe energy-2026-10-seed-pilot-40n-000e-202611280940 --location=europe-west1 --project=nature-watch-387210
+gcloud batch jobs delete energy-2026-10-seed-pilot-40n-000e-202611280940 --location=europe-west1 --project=nature-watch-387210   # cancel
+```
+
+Seed pilot result: 14,518,760 rows (2,595,327 `power`), 1,068,153,362 bytes, 48.0 s of query, 69 s of task, peak 9.2 GB.
+
+**Sprout pilot, `40N_000E`.** Submitted at 09:46 UTC as `energy-2026-10-sprout-pilot-40n-000e-202611280945`: one spot `e2-highmem-2`, 100 GB `pd-standard`. Its neighbours have no seed yet, so it reads only its own block, and writes to `gs://nature-watch-bucket/scratch/energy/seed-infrastructure-overture-2026-10-21/pilot/`.
+
+```bash
+gcloud batch jobs describe energy-2026-10-sprout-pilot-40n-000e-202611280945 --location=europe-west1 --project=nature-watch-387210
+gcloud batch jobs delete energy-2026-10-sprout-pilot-40n-000e-202611280945 --location=europe-west1 --project=nature-watch-387210   # cancel
+```
+
+Sprout pilot result: 111 s of task, 101 s for the block (30 s fetching its 1.07 GB seed), peak 3.0 GB.
+
+| | `power-lines` | `power-sites` |
+| --- | --- | --- |
+| Features burned | 200,342 | 32,903 |
+| Marked cells | 12,897,827 (7.03 M distribution, 3.50 M sub-transmission, 1.36 M transmission, 0.99 M extra-high) | 626,333 (416,037 solar, 100,525 substation, 28,873 bioenergy and waste, 28,825 nuclear, 16,360 wind, 15,188 oil and gas, 8,909 hydro, 7,854 coal, 3,470 other, 292 storage) |
+| COG | 13,182,982 bytes, 1.0 a cell | 2,071,666 bytes, 3.3 a cell |
+| Burn and write | 32.6 s | 38.8 s |
+
+**Check against task 01.** In the part of the Gironde window inside the block (0–0.5°E, 43.8–45.8°N), `power-sites` matches task 01 in every cell. `power-lines` has 109,934 cells against 114,639. Task 01's window sprout burned again from only the lines whose bbox centre is east of 0° gives 109,933 cells, one cell from the pilot: the 4,705 missing cells are lines stored in `40N_010W`, which the pilot did not read, and the one extra is on the window edge, from a line just outside the window that the one-cell margin reads. The full run reads every neighbour.
+
+**Revised cost, from the pilots.** For approval before the full jobs. Spot prices about $0.07 an hour for `e2-standard-4` and $0.045 for `e2-highmem-2`. The project's 32-CPU Batch quota runs 8 seed machines or 16 sprout machines at once, which lengthens the wall time, not the cost.
+
+| Step | Work | Machine and time | Compute | Stored | Storage a month |
+| --- | --- | --- | --- | --- | --- |
+| Seed | 648 blocks in 20 tasks; 159 million rows at 48 s per 14.5 million (the densest block), plus about 1 s for each empty block and a few minutes of start-up a task | spot `e2-standard-4`, 1–2 task-hours, about 20–40 minutes of wall time | about $0.07–0.15 | about 11.7 GB (1.07 GB for 14.5 million rows) | about $0.27 |
+| Sprouts | 648 blocks in 20 tasks; about 330 have power in or beside them, at 40–100 s each for both layers, plus neighbour seed fetches at about 35 MB/s; the rest write only a record | spot `e2-highmem-2`, 4–10 task-hours, about 20–45 minutes of wall time | about $0.20–0.45, plus about $0.03 of standard disk | 0.1–0.3 GB (1.0 byte a line cell, 3.3 a site cell; the densest block holds 13.5 million marked cells) | under $0.01 |
+
+One-off compute about $0.30–0.65, against $0.25–0.80 in the task 01 estimate. Both pilots used about 4 machine-minutes, under $0.01. The pilot COGs in the scratch prefix are deleted after the full run.

@@ -179,3 +179,84 @@ def test_tippecanoe_clusters_and_sums_every_group(tmp_path):
         assert f"--accumulate-attribute=area_{g}:sum" in args and f"--accumulate-attribute=n_{g}:sum" in args
     assert args[args.index("-Z") + 1] == "2" and args[args.index("-z") + 1] == "14"
     assert tiles.SITE_POINT_MAX_ZOOM == 9 and (tiles.TOP_ZOOM, tiles.SHARE_FULL) == (11, 0.1)
+
+
+seedmod = load("seed")
+
+
+def test_the_block_seed_keeps_rows_whose_centre_is_inside(con):
+    con.execute("CREATE TABLE src AS SELECT * FROM (VALUES "
+                "('a', 'power', 'plant', 9.0, 11.0), ('b', 'power', 'plant', 12.0, 14.0), ('c', 'water', 'dam', 19.5, 20.5)"
+                ") AS v(id, subtype, class, xmin, xmax)")
+    con.execute("""CREATE TABLE inf AS SELECT id, subtype, class, {'primary': id} AS names, [] :: STRUCT(dataset VARCHAR, record_id VARCHAR)[] AS sources,
+                   NULL::VARCHAR AS wikidata, MAP {}::MAP(VARCHAR, VARCHAR) AS source_tags, NULL::DOUBLE AS height,
+                   NULL::VARCHAR AS surface, NULL::INTEGER AS level,
+                   {'xmin': xmin, 'xmax': xmax, 'ymin': -25.0, 'ymax': -24.0} AS bbox, ST_Point(xmin, -25.0) AS geometry FROM src""")
+    def ids(block):
+        return {r[0] for r in con.execute(seedmod.block_query("inf", (block[0], -30.0, block[0] + 10, -20.0))).fetchall()}
+    # a's centre is 10.0, on the west edge of the 10°E block; b's is 13.0; c's 20.0 belongs to the 20°E block
+    assert ids((10.0,)) == {"a", "b"}
+    assert ids((20.0,)) == {"c"}
+    assert ids((0.0,)) == set()
+
+
+def site_seed(con, rows):
+    con.execute("CREATE OR REPLACE TABLE s (subtype VARCHAR, class VARCHAR, source_tags MAP(VARCHAR, VARCHAR), id VARCHAR, "
+                "name VARCHAR, osm_id VARCHAR, bbox STRUCT(xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE), geometry GEOMETRY)")
+    for i, (cls, tags, wkt) in enumerate(rows):
+        con.execute("INSERT INTO s SELECT 'power', ?, MAP(?::VARCHAR[], ?::VARCHAR[]), ?, NULL, NULL, "
+                    "{'xmin': ST_XMin(g), 'ymin': ST_YMin(g), 'xmax': ST_XMax(g), 'ymax': ST_YMax(g)}, g "
+                    "FROM (SELECT ST_GeomFromText(?) AS g)", [cls, list(tags), list(tags.values()), str(i), wkt])
+
+
+def test_a_site_across_a_block_edge_marks_both_sides_and_far_features_are_skipped(con, tmp_path):
+    p = sprout.PIXEL
+    x0, y0 = 10.0, -20.0  # the edge between two test "blocks" of 10 × 10 cells is at x0
+    site_seed(con, [
+        ("plant", {"plant:source": "solar"},
+         f"POLYGON(({x0 - 3 * p} {y0 - 2 * p}, {x0 + 2 * p} {y0 - 2 * p}, {x0 + 2 * p} {y0 - 5 * p}, {x0 - 3 * p} {y0 - 5 * p}, {x0 - 3 * p} {y0 - 2 * p}))"),
+        ("power_line", {"voltage": "400000"}, f"LINESTRING({x0 - 9.5 * p} {y0 - 0.5 * p}, {x0 + 9.5 * p} {y0 - 0.5 * p})"),
+        ("power_line", {"voltage": "400000"}, f"LINESTRING({x0 + 50 * p} {y0 - 0.5 * p}, {x0 + 60 * p} {y0 - 0.5 * p})"),
+    ])
+    seed_file = tmp_path / "seed.parquet"
+    con.execute(f"COPY s TO '{seed_file}' (FORMAT parquet)")
+    written = []
+    west = sprout.burn_block(con, [str(seed_file)], (x0 - 10 * p, y0 - 10 * p, x0, y0), tmp_path, lambda l, f: written.append(("w", l)))
+    east = sprout.burn_block(con, [str(seed_file)], (x0, y0 - 10 * p, x0 + 10 * p, y0), tmp_path, lambda l, f: written.append(("e", l)))
+    assert west["power-sites"]["marked_cells"] == 9 and east["power-sites"]["marked_cells"] == 6
+    assert west["power-lines"]["features"] == 1 and east["power-lines"]["features"] == 1  # the far line is not read
+    assert west["power-lines"]["by_value"] == {"extra-high": 10}
+    assert sorted(written) == [("e", "power-lines"), ("e", "power-sites"), ("w", "power-lines"), ("w", "power-sites")]
+
+
+def test_an_empty_block_writes_no_cog(con, tmp_path):
+    p = sprout.PIXEL
+    site_seed(con, [("power_line", {"voltage": "400000"}, f"LINESTRING(0 0, {p} 0)")])
+    seed_file = tmp_path / "seed.parquet"
+    con.execute(f"COPY s TO '{seed_file}' (FORMAT parquet)")
+    out = sprout.burn_block(con, [str(seed_file)], (50.0, 50.0, 50 + 10 * p, 50 + 10 * p), tmp_path, lambda l, f: pytest.fail("wrote"))
+    assert out["power-lines"] == {"features": 0, "marked_cells": 0, "by_value": {}, "bytes": 0, "seconds": out["power-lines"]["seconds"]}
+
+
+def test_the_recipes_load_from_a_json_copy(tmp_path):
+    import json as _json
+
+    copy = tmp_path / "power-lines-2026-10-v1.json"
+    copy.write_text(_json.dumps(rules.LINES, default=str))
+    loaded = rules.load_recipe(tmp_path / "power-lines-2026-10-v1.yaml")
+    assert loaded["sprout"]["bands"]["voltage"]["4"] == "extra-high"
+    assert loaded["seed"]["path"] == rules.LINES["seed"]["path"]
+
+
+def test_the_sprout_plan_weights_power_near_a_block():
+    batch = load("batch")
+    records = [{"block": "40N_000E", "width": 40000, "height": 40000, "transform": [0, 0.00025, 0, 50, 0, -0.00025],
+                "layers": {"power-lines": {"bytes": 7, "features": 1, "marked_cells": 2, "by_value": {"distribution": 2}, "seconds": 1},
+                           "power-sites": {"bytes": 0, "features": 0, "marked_cells": 0, "by_value": {}, "seconds": 1}},
+                "seconds": 3, "fetch_seconds": 1, "peak_memory_bytes": 5}]
+    assert batch.layer_records(records, "power-sites")[0]["bytes"] == 0
+    t = batch.totals("sprout", records)
+    assert t["power-lines"]["with_data"] == 1 and t["power-sites"]["with_data"] == 0
+    assert batch.make_plan("seed", "40N_000E") == {"kind": "seed", "groups": [["40N_000E"]], "pilot": True}
+    assert batch.sprout_object("power-sites", "40N_000E", "tif").endswith("sprouts/power-sites/2026-10/v1/blocks/40N_000E.tif")
+    assert "/scratch/energy/" in batch.sprout_object("power-sites", "40N_000E", "tif", pilot=True)

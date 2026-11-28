@@ -36,8 +36,8 @@ import seed as roads_seed  # noqa: E402
 import tiles as roads_tiles  # noqa: E402
 
 DATA = HERE.parent / "data" / "energy"
-_line_tiles = yaml.safe_load(rules.LINES_RECIPE.read_text())["tiles"]
-_site_tiles = yaml.safe_load(rules.SITES_RECIPE.read_text())["tiles"]
+_line_tiles = rules.LINES["tiles"]
+_site_tiles = rules.SITES["tiles"]
 TOP_ZOOM = _line_tiles["max_zoom"]
 SHARE_STEPS = _line_tiles["share_steps"]
 SHARE_FULL = _line_tiles["share_full"]

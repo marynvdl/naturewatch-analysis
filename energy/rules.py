@@ -6,16 +6,28 @@ The recipes are the catalog: cookbook/recipes/power-lines-2026-10-v1.yaml and po
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-
-import yaml
 
 RECIPES = Path(__file__).resolve().parents[1] / "cookbook" / "recipes"
 LINES_RECIPE = RECIPES / "power-lines-2026-10-v1.yaml"
 SITES_RECIPE = RECIPES / "power-sites-2026-10-v1.yaml"
 
-_lines = yaml.safe_load(LINES_RECIPE.read_text())["lines"]
-_sites_recipe = yaml.safe_load(SITES_RECIPE.read_text())
+
+def load_recipe(path: Path) -> dict:
+    """The recipe YAML, or the JSON copy beside it that a Batch task gets, since its container has no PyYAML."""
+    copy = path.with_suffix(".json")
+    if copy.exists():
+        return json.loads(copy.read_text())
+    import yaml
+
+    return yaml.safe_load(path.read_text())
+
+
+LINES = load_recipe(LINES_RECIPE)
+SITES = load_recipe(SITES_RECIPE)
+_lines = LINES["lines"]
+_sites_recipe = SITES
 _sites = _sites_recipe["sites"]
 
 VOLTAGE_CLASSES = sorted(((int(c), v["from_volts"]) for c, v in _lines["voltage_classes"].items()), key=lambda cv: -cv[1])
