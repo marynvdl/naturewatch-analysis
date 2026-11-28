@@ -159,7 +159,7 @@ def test_the_burn_marks_line_cells_and_site_cells(con, tmp_path):
 
     sites_fgb = tmp_path / "sites.fgb"
     # the polygon is 3 × 3 cells; ST_Area_Spheroid of that is far over the minimum generator area, and a plant is kept anyway
-    assert sprout.burn_file(con, sprout.sites_query("seed"), "value", sites_fgb, point_as_cell=True) == 2
+    assert sprout.burn_file(con, sprout.sites_query("seed", burn=True), "value", sites_fgb, point_as_cell=True) == 2
     sites = sprout.burn(sites_fgb, bounds, all_touched=False)
     assert (sites[6:9, 6:9] == rules.SITE_VALUES["solar"]).all()
     assert sites[1, 1] == rules.SITE_VALUES["wind"]
@@ -260,3 +260,28 @@ def test_the_sprout_plan_weights_power_near_a_block():
     assert batch.make_plan("seed", "40N_000E") == {"kind": "seed", "groups": [["40N_000E"]], "pilot": True}
     assert batch.sprout_object("power-sites", "40N_000E", "tif").endswith("sprouts/power-sites/2026-10/v1/blocks/40N_000E.tif")
     assert "/scratch/energy/" in batch.sprout_object("power-sites", "40N_000E", "tif", pilot=True)
+
+
+@pytest.mark.parametrize(
+    "cls, group, area, expected",
+    [("plant", "wind", 5_000_000, False), ("plant", "wind", 0, True), ("generator", "wind", 0, True),
+     ("plant", "solar", 5_000_000, True), ("substation", "substation", 500, True), ("plant", None, 10, False)],
+)
+def test_a_wind_plant_outline_is_not_burned(cls, group, area, expected):
+    assert rules.burned(cls, group, area) == expected
+
+
+def test_the_burn_query_leaves_out_a_wind_farm_outline_but_keeps_its_turbines(con, tmp_path):
+    p = sprout.PIXEL
+    x0, y0 = 10.0, -20.0
+    site_seed(con, [
+        ("plant", {"plant:source": "wind"},
+         f"POLYGON(({x0} {y0}, {x0 + 8 * p} {y0}, {x0 + 8 * p} {y0 - 8 * p}, {x0} {y0 - 8 * p}, {x0} {y0}))"),
+        ("generator", {"generator:source": "wind"}, f"POINT({x0 + 2.5 * p} {y0 - 2.5 * p})"),
+    ])
+    kept = con.execute(f"SELECT class FROM ({sprout.sites_query('s')}) ORDER BY class").fetchall()
+    assert kept == [("generator",), ("plant",)]  # both stay in the tiles
+    fgb = tmp_path / "sites.fgb"
+    assert sprout.burn_file(con, sprout.sites_query("s", burn=True), "value", fgb, point_as_cell=True) == 1
+    cells = sprout.burn(fgb, (x0, y0 - 10 * p, x0 + 10 * p, y0), all_touched=False)
+    assert int((cells > 0).sum()) == 1 and cells[2, 2] == rules.SITE_VALUES["wind"]

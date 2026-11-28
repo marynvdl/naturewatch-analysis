@@ -59,8 +59,11 @@ def lines_query(source: str) -> str:
     """
 
 
-def sites_query(source: str) -> str:
-    """Kept sites with their group, value, area and card attributes, in burn order."""
+def sites_query(source: str, burn: bool = False) -> str:
+    """Kept sites with their group, value, area and card attributes, in burn order.
+
+    With `burn`, only the sites that mark cells: a wind plant polygon stays in the tiles but its turbines mark the sprout.
+    """
     card = ", ".join(f"{sql} AS {key}" for key, sql in CARD.items())
     return f"""
         WITH s AS (
@@ -74,7 +77,7 @@ def sites_query(source: str) -> str:
         )
         SELECT id, class, site_group, {rules.site_value_sql()} AS value, round(area_m2) AS area_m2,
                {', '.join(CARD)}, geometry
-        FROM g WHERE site_group IS NOT NULL ORDER BY value, id
+        FROM g WHERE site_group IS NOT NULL{f" AND {rules.burned_sql()}" if burn else ""} ORDER BY value, id
     """
 
 
@@ -182,7 +185,7 @@ def burn_block(con, paths: list[str], bounds, work: Path, write) -> dict[str, di
     source = bbox_source(paths, bounds)
     for layer, query, all_touched in (
         ("power-lines", lines_query(source), True),
-        ("power-sites", sites_query(source), False),
+        ("power-sites", sites_query(source, burn=True), False),
     ):
         started = time.perf_counter()
         fgb = work / f"{layer}.fgb"
@@ -214,7 +217,7 @@ def command_window(name: str, bounds) -> list[dict]:
     records = []
     for layer, query, all_touched in (
         ("power-lines", lines_query(source), True),
-        ("power-sites", sites_query(source), False),
+        ("power-sites", sites_query(source, burn=True), False),
     ):
         started = time.perf_counter()
         work = DATA / "work" / f"{layer}-{name}.fgb"

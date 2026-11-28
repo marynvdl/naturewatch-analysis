@@ -194,3 +194,12 @@ Sprout result: the job ran 31 min, 10:04–10:35 UTC, every task succeeding firs
 **Check against task 01.** Karoo matches in every cell for both sprouts. Gironde `power-sites` matches in every cell. Gironde `power-lines` has 351,350 cells against 351,347, with 27 differing: 26 are one segment lying exactly on the cell edge at 45.7005°N, 0.0655–0.0688°E, burned one row lower in the block grid than in the window grid, and one is a single cell at 45.451°N 0.170°E. The burn origin differs (the block corner, not the window corner), so a segment on a cell edge can fall on either side.
 
 **Wind cells.** 39.2 million of the 81.0 million site cells are wind, against none from polygons in the task 01 windows, where wind was turbine points. Most are offshore wind farms mapped as plant polygons over open sea: in `50N_000E` the most wind cells per 0.5° are at Dogger Bank, Hornsea, the German Bight and the Thames estuary, and in `30N_120E` off the Jiangsu coast.
+
+The user chose on 28 November 2026 to burn wind farms by their turbines only: `outline_only: [wind]` in the `power-sites` recipe. A wind plant polygon keeps its group and card for the tiles, and is left out of the burn. Neither task 01 window has a wind plant polygon, so their figures above are unchanged (rebuilt on the laptop: the same cells and bytes).
+
+**Sprouts, second run.** The 648 block records and the 298 `power-sites` COGs of the first run were deleted, and the `power-lines` COGs are written again unchanged. Submitted at 10:43 UTC as `energy-2026-10-sprout-202611281042`, the same shape.
+
+```bash
+gcloud batch jobs describe energy-2026-10-sprout-202611281042 --location=europe-west1 --project=nature-watch-387210
+gcloud batch jobs delete energy-2026-10-sprout-202611281042 --location=europe-west1 --project=nature-watch-387210   # cancel
+```

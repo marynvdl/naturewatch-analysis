@@ -42,6 +42,7 @@ MIN_SUBSTATION_M2 = _sites["min_substation_m2"]  # smaller substations are distr
 # Burn values. A cell takes the highest value burned into it, so dirtier groups sit higher.
 SITE_VALUES = {name: int(value) for value, name in _sites_recipe["sprout"]["bands"]["source"].items() if int(value) > 0}
 CARD = dict(_sites["card"])
+OUTLINE_ONLY = set(_sites.get("outline_only", []))  # plant polygons of these groups are not burned
 
 
 def volts(text: str | None) -> int | None:
@@ -94,6 +95,13 @@ def site_group(cls: str, tags: dict, area_m2: float | None) -> str | None:
             return None if source == "solar" else source
         return source if area_m2 >= MIN_GENERATOR_M2 else None
     return None
+
+
+def burned(cls: str, group: str | None, area_m2: float | None) -> bool:
+    """Whether a kept site marks sprout cells. A wind plant polygon does not: its turbines do."""
+    if group is None:
+        return False
+    return not (cls == "plant" and group in OUTLINE_ONLY and (area_m2 or 0) > 0)
 
 
 # ---- the same rules in DuckDB SQL, over seed rows (class, source_tags, geometry) -----------------
@@ -150,3 +158,9 @@ def site_group_sql(area: str = "area_m2") -> str:
 
 def site_value_sql(group: str = "site_group") -> str:
     return "CASE " + " ".join(f"WHEN {group} = '{g}' THEN {v}" for g, v in SITE_VALUES.items()) + " END"
+
+
+def burned_sql(group: str = "site_group", area: str = "area_m2") -> str:
+    if not OUTLINE_ONLY:
+        return "TRUE"
+    return f"NOT (class = 'plant' AND {group} IN ({_q(OUTLINE_ONLY)}) AND {area} > 0)"
