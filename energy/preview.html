@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Energy sample preview</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.34.1/mapbox-gl.js"></script>
+<script src="/config.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #bar { position: absolute; z-index: 2; left: 8px; top: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+         background: #fffe; padding: 6px 8px; border-radius: 6px; box-shadow: 0 1px 4px #0003; }
+  #map { position: absolute; inset: 0; }
+  #legend { position: absolute; z-index: 2; left: 8px; bottom: 24px; background: #fffe; padding: 6px 8px; border-radius: 6px; box-shadow: 0 1px 4px #0003; line-height: 1.5; max-width: 260px; }
+  #note { font-size: 12px; color: #444; margin-top: 4px; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 6px; vertical-align: middle; margin-right: 6px; border: 1px solid #0006; }
+  .ln { display: inline-block; width: 22px; height: 4px; vertical-align: middle; margin-right: 6px; }
+  .mapboxgl-popup-content table { border-collapse: collapse; } .mapboxgl-popup-content td { padding: 1px 6px 1px 0; vertical-align: top; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <label>Heat of
+    <select id="heatof">
+      <option value="all">all sites</option>
+      <option value="coal,fossil">coal, oil and gas</option>
+      <option value="nuclear">nuclear</option>
+      <option value="bio_waste">bioenergy and waste</option>
+      <option value="hydro">hydro</option>
+      <option value="wind">wind</option>
+      <option value="solar">solar</option>
+      <option value="substation">substations</option>
+    </select>
+  </label>
+  <span id="heatctl">
+    <select id="ramp">
+      <option value="amber">Amber, one hue</option>
+      <option value="white">White glow</option>
+      <option value="magma">Magma</option>
+      <option value="teal">Teal to yellow</option>
+      <option value="classic">Mapbox default</option>
+    </select>
+    <label>radius <input type="range" id="radius" min="4" max="40" value="18" style="width:80px"></label>
+    <label>intensity <input type="range" id="intensity" min="0.2" max="3" step="0.1" value="1" style="width:80px"></label>
+    <label>opacity <input type="range" id="hopacity" min="0.2" max="1" step="0.05" value="0.8" style="width:70px"></label>
+  </span>
+  <label><input type="checkbox" id="lines" checked> Power lines</label>
+  <select id="basemap">
+    <option value="satellite">Satellite (app)</option>
+    <option value="standard">Standard monochrome (app)</option>
+  </select>
+  <span id="windows"></span>
+  <span id="zoom"></span>
+</div>
+<div id="map"></div>
+<div id="legend"></div>
+<script>
+const C = window.ENERGY;
+const STYLES = {
+  standard: { style: 'mapbox://styles/mapbox/standard', config: { basemap: { theme: 'monochrome', lightPreset: 'day' } } },
+  satellite: { style: 'mapbox://styles/nature-watch/clhasd44b012301pg7dilg74p' },
+};
+// Site groups as burned in the power-sites sprout (energy/rules.py SITE_VALUES), dirtiest last.
+const GROUPS = [
+  ['substation', 'Substation', '#c51b7d', 1], ['storage', 'Storage', '#d9d9d9', 2], ['other', 'Other', '#9e9e9e', 3],
+  ['solar', 'Solar', '#f2c200', 4], ['wind', 'Wind', '#5aa9e6', 5], ['hydro', 'Hydro', '#1f5fb4', 6],
+  ['bio_waste', 'Bioenergy and waste', '#7fbc41', 7], ['nuclear', 'Nuclear', '#33c08a', 8],
+  ['fossil', 'Oil and gas', '#8c510a', 9], ['coal', 'Coal', '#111111', 10],
+];
+const groupColour = ['match', ['get', 'group'], ...GROUPS.flatMap(g => [g[0], g[2]]), '#9e9e9e'];
+const VOLTS = { 1: ['under 50 kV', '#fee08b'], 2: ['50–200 kV', '#fdae61'], 3: ['200–330 kV', '#f46d43'], 4: ['330 kV and up', '#9e0142'] };
+const LINE_SHARE = [253, 174, 97];
+const STEPS = 8, TOP = 11, POINT_MAX = 9;
+const rgba = (c, a) => `rgba(${c.join(',')},${a})`;
+const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const RED = { 'raster-color-mix': [255, 0, 0, 0], 'raster-color-range': [0, 255], 'raster-fade-duration': 0, 'raster-resampling': 'nearest' };
+function sharePaint(colour) {
+  const expr = ['interpolate', ['linear'], ['raster-value'], 0, rgba(colour, 0)];
+  for (let k = 1; k <= STEPS; k++) expr.push(Math.max(1, Math.round((k / STEPS) ** 2 * 255)), rgba(colour, 0.2 + 0.75 * k / STEPS));
+  return { ...RED, 'raster-color': expr };
+}
+function classPaint(colours) {  // red = class × 4
+  const expr = ['step', ['raster-value'], 'rgba(0,0,0,0)'];
+  for (const [v, c] of colours) expr.push(v * 4 - 0.5, c, v * 4 + 0.5, 'rgba(0,0,0,0)');
+  return { ...RED, 'raster-color': expr };
+}
+// Heatmap colour ramps, from no density (transparent) to the densest.
+const RAMPS = {
+  amber: [[0, 'rgba(242,194,0,0)'], [0.2, 'rgba(242,194,0,0.25)'], [0.5, 'rgba(242,170,0,0.55)'], [0.8, 'rgba(230,130,0,0.8)'], [1, 'rgba(200,90,0,0.95)']],
+  white: [[0, 'rgba(255,255,255,0)'], [0.3, 'rgba(255,255,255,0.25)'], [0.7, 'rgba(255,255,255,0.6)'], [1, 'rgba(255,255,255,0.95)']],
+  magma: [[0, 'rgba(0,0,4,0)'], [0.15, 'rgba(59,15,112,0.5)'], [0.4, 'rgba(140,41,129,0.7)'], [0.65, 'rgba(222,73,104,0.85)'], [0.85, 'rgba(254,159,109,0.95)'], [1, 'rgba(252,253,191,1)']],
+  teal: [[0, 'rgba(1,102,94,0)'], [0.25, 'rgba(1,102,94,0.45)'], [0.5, 'rgba(53,151,143,0.65)'], [0.75, 'rgba(128,205,193,0.85)'], [1, 'rgba(246,232,195,0.95)']],
+  classic: null,
+};
+const rampExpr = name => RAMPS[name] && ['interpolate', ['linear'], ['heatmap-density'], ...RAMPS[name].flat()];
+const NOTE = 'To zoom 9, a heatmap of the site points. Crowded points are merged in the tiles but keep their summed area and count, in total and per group, so the heat can be drawn for one group. Each site counts by √area, a turbine or a point site as 1 ha. Colours, radius, intensity and opacity are paint only.';
+
+const P = new URLSearchParams(location.search);
+const heatOf = document.getElementById('heatof');
+heatOf.value = P.get('h') || 'all';
+const basemapSel = document.getElementById('basemap');
+const linesBox = document.getElementById('lines');
+
+mapboxgl.accessToken = C.token;
+const map = new mapboxgl.Map({ container: 'map', ...STYLES[basemapSel.value], projection: 'globe', center: [23.3, -31.6], zoom: 7, hash: true });
+map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+
+const win = document.getElementById('windows');
+for (const [name, b] of Object.entries(C.windows)) {
+  const btn = document.createElement('button');
+  btn.textContent = name;
+  btn.onclick = () => { current = name; draw(); map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 }); };
+  win.appendChild(btn);
+}
+let current = Object.keys(C.windows)[0];
+const inWindow = () => {
+  const c = map.getCenter();
+  for (const [name, b] of Object.entries(C.windows)) if (c.lng >= b[0] - 3 && c.lng <= b[2] + 3 && c.lat >= b[1] - 3 && c.lat <= b[3] + 3) return name;
+  return current;
+};
+const url = name => `${location.origin}/tiles/${name}`;
+const IDS = [];
+
+function add(id, spec) { map.addLayer({ id, ...spec }); IDS.push(id); }
+function clear() {
+  while (IDS.length) { const id = IDS.pop(); if (map.getLayer(id)) map.removeLayer(id); }
+  for (const s of ['lines', 'sites']) for (const w of Object.keys(C.windows)) if (map.getSource(`${s}-${w}`)) map.removeSource(`${s}-${w}`);
+}
+
+function draw() {
+  clear();
+  for (const w of Object.keys(C.windows)) {
+    if (linesBox.checked) {
+      map.addSource(`lines-${w}`, { type: 'raster', url: url(`power-lines-${w}.pmtiles`), tileSize: 512, maxzoom: TOP });
+      add(`lines-share-${w}`, { type: 'raster', source: `lines-${w}`, maxzoom: TOP, paint: sharePaint(LINE_SHARE) });
+      add(`lines-volt-${w}`, { type: 'raster', source: `lines-${w}`, minzoom: TOP, paint: classPaint(Object.entries(VOLTS).map(([k, [, c]]) => [Number(k), c])) });
+    }
+    map.addSource(`sites-${w}`, { type: 'vector', url: url(`power-sites-${w}.pmtiles`) });
+    const src = { source: `sites-${w}`, 'source-layer': 'sites' };
+    add(`sites-fill-${w}`, { ...src, type: 'fill', minzoom: POINT_MAX + 1, filter: ['!=', ['geometry-type'], 'Point'],
+      paint: { 'fill-color': groupColour, 'fill-opacity': 0.45, 'fill-outline-color': groupColour } });
+    add(`sites-line-${w}`, { ...src, type: 'line', minzoom: POINT_MAX + 1, filter: ['!=', ['geometry-type'], 'Point'],
+      paint: { 'line-color': groupColour, 'line-width': 1.5 } });
+    add(`sites-hi-${w}`, { ...src, type: 'circle', minzoom: POINT_MAX + 1, filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-color': groupColour, 'circle-radius': 4, 'circle-stroke-color': '#000', 'circle-stroke-width': 1 } });
+    const low = { ...src, maxzoom: POINT_MAX + 1, filter: ['==', ['geometry-type'], 'Point'] };
+    add(`sites-heat-${w}`, { ...low, type: 'heatmap', paint: heatPaint() });
+  }
+  legend();
+}
+
+function heatPaint() {
+  const radius = Number(document.getElementById('radius').value);
+  // Weight: √ of the summed area in m² of the chosen groups, each site at least 1 ha (a turbine or a point site),
+  // scaled so a 6 ha site is 1 and anything from 56 ha counts 3.
+  const groups = heatOf.value === 'all' ? GROUPS.map(g => g[0]) : heatOf.value.split(',');
+  const sum = key => ['+', 0, ...groups.map(g => ['coalesce', ['get', `${key}_${g}`], 0])];
+  const area = ['max', sum('area'), ['*', 10000, sum('n')]];
+  const paint = {
+    'heatmap-weight': ['min', 3, ['/', ['sqrt', area], 250]],
+    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 2, radius / 3, 9, radius],
+    'heatmap-intensity': Number(document.getElementById('intensity').value),
+    'heatmap-opacity': Number(document.getElementById('hopacity').value),
+  };
+  const ramp = rampExpr(document.getElementById('ramp').value);
+  if (ramp) paint['heatmap-color'] = ramp;
+  return paint;
+}
+function restyleHeat() {
+  const paint = heatPaint();
+  for (const id of IDS.filter(i => i.startsWith('sites-heat'))) {
+    for (const k of ['heatmap-weight', 'heatmap-radius', 'heatmap-intensity', 'heatmap-opacity']) map.setPaintProperty(id, k, paint[k]);
+    map.setPaintProperty(id, 'heatmap-color', paint['heatmap-color'] || ['interpolate', ['linear'], ['heatmap-density'],
+      0, 'rgba(0,0,255,0)', 0.1, 'royalblue', 0.3, 'cyan', 0.5, 'lime', 0.7, 'yellow', 1, 'red']);
+  }
+}
+
+function legend() {
+
+  document.getElementById('legend').innerHTML =
+    `<b>Sites</b><br>` + GROUPS.slice().reverse().map(g => `<span class="sw" style="background:${g[2]}"></span>${g[1]}`).join('<br>') +
+    `<br><b>Lines, from zoom ${TOP}</b><br>` + Object.values(VOLTS).map(([n, c]) => `<span class="ln" style="background:${c}"></span>${n}`).join('<br>') +
+    `<div id="note">${NOTE} Shapes from zoom ${POINT_MAX + 1}. Click a site for its card.</div>`;
+}
+
+map.on('click', e => {
+  const ids = IDS.filter(id => id.startsWith('sites-') && !id.startsWith('sites-heat'));
+  const f = map.queryRenderedFeatures(e.point, { layers: ids })[0];
+  if (!f) return;
+  const p = f.properties;
+  const rows = Object.entries(p).filter(([k]) => k !== 'osm_id').map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const osm = p.osm_id ? `<a target="_blank" href="https://www.openstreetmap.org/${{ n: 'node', w: 'way', r: 'relation' }[p.osm_id[0]]}/${p.osm_id.slice(1)}">OpenStreetMap</a>` : '';
+  new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(`<table>${rows}</table>${osm}`).addTo(map);
+});
+map.on('style.load', draw);
+heatOf.onchange = restyleHeat;
+for (const id of ['ramp', 'radius', 'intensity', 'hopacity']) document.getElementById(id).oninput = restyleHeat;
+linesBox.onchange = draw;
+basemapSel.onchange = () => { const s = STYLES[basemapSel.value]; map.setStyle(s.style, s.config ? { config: s.config } : undefined); };
+const zoomEl = document.getElementById('zoom');
+const showZoom = () => { zoomEl.textContent = `zoom ${map.getZoom().toFixed(1)}`; };
+map.on('zoom', showZoom); map.on('load', showZoom);
+</script>
+</body>
+</html>

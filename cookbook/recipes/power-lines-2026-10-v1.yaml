@@ -1,0 +1,60 @@
+# Hand-edited catalog for power lines, part of the Energy layer (task 01 of the Energy parcel in naturewatch-app).
+# One snapshot of OpenStreetMap power lines through Overture: a seed, a sprout on the stats grid, and raster PMTiles.
+# The measurements behind the voltage classes, the share curve and the top zoom are in energy/README.md.
+# Approved by the user on 27 November 2026. energy/rules.py reads the rules below.
+id: power-lines-2026-10-v1
+title: Overture power lines, release 2026-10-21.0
+source:
+  name: Overture Maps base, infrastructure (OpenStreetMap)
+  url: https://docs.overturemaps.org/guides/base/
+  release: 2026-10-21.0
+  path: s3://overturemaps-us-west-2/release/2026-10-21.0/theme=base/type=infrastructure/*.parquet
+  s3_region: us-west-2
+  licence: ODbL-1.0
+  attribution: © OpenStreetMap contributors, Overture Maps Foundation
+period: {start: 2026-10-21, end: 2026-10-21}
+extent: global
+grid:
+  crs: EPSG:4326
+  pixel_size_deg: 0.00025
+  origin: [-180, 90]
+  dtype: uint8
+lines:
+  subtype: power
+  classes: [power_line, minor_line, cable]
+  # A line with one of these `location` tags is not drawn. A cable is drawn only when tagged `location=overhead`.
+  buried: [underground, underwater, indoor]
+  # Voltage class from the highest value in the `voltage` tag, in volts. Without a voltage: power_line 2, minor_line 1.
+  voltage_classes:
+    4: {name: extra-high, from_volts: 330000}
+    3: {name: transmission, from_volts: 200000}
+    2: {name: sub-transmission, from_volts: 50000}
+    1: {name: distribution, from_volts: 0}
+  without_voltage: {power_line: 2, minor_line: 1}
+seed:
+  id: seed-infrastructure-overture-2026-10-21
+  path: gs://nature-watch-bucket/seeds/infrastructure/overture/2026-10-21.0/
+  # Every base/infrastructure subtype, so Water can reuse the read. GeoParquet split by 10° block, as roads.
+  # Kept after the sprout and tiles: Overture does not keep every release. Shared with power-sites-2026-10-v1.
+  format: geoparquet
+  columns: [id, subtype, class, name, osm_id, wikidata, source_tags, height, surface, level, bbox, geometry]
+sprout:
+  id: power-lines-2026-10-v1
+  path: gs://nature-watch-bucket/sprouts/power-lines/2026-10/v1/
+  # One COG per 10° block, a VRT over them and static STAC files. A block without a line is not written and reads 0.
+  burn: all_touched
+  nodata: none
+  compression: {method: deflate, level: 6, predictor: none, blocksize: 512}
+  bands:
+    voltage: {0: none, 1: distribution, 2: sub-transmission, 3: transmission, 4: extra-high}
+tiles:
+  path: gs://nature-watch-tiles/energy/2026-10/v1/power-lines.pmtiles
+  scheme: pmtiles
+  tile_size: 512
+  min_zoom: 0
+  max_zoom: 11
+  # The roads encoding on a one-band sprout. Palette PNG, red carries the value, index 0 is transparent.
+  # Below max_zoom: shade k of share_steps, red = round((k / share_steps)² × 255), k = max(1, round(√(share / share_full) × share_steps)).
+  # At max_zoom: red = voltage class × 4 of the highest class under the pixel.
+  share_steps: 8
+  share_full: 0.1

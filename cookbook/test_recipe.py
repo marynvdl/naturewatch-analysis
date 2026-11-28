@@ -35,6 +35,8 @@ def test_the_catalog_lists_the_cropland_and_places_recipes():
         "places-ecoregions.yaml",
         "places-protected-areas.yaml",
         "places-recognitions.yaml",
+        "power-lines-2026-10-v1.yaml",
+        "power-sites-2026-10-v1.yaml",
         "roads-2026-10-v1.yaml",
     ]
     recipe = dict(loaded)["cropland-2024.yaml"]
@@ -220,3 +222,25 @@ def test_the_roads_recipe_names_the_release_levels_and_tiles():
     assert tiles["path"] == "gs://nature-watch-tiles/roads/2026-10/v1/roads.pmtiles"
     assert (tiles["tile_size"], tiles["min_zoom"], tiles["max_zoom"]) == (512, 0, 11)
     assert (tiles["share_steps"], tiles["share_full"]) == (8, 0.25)
+
+
+def test_the_energy_recipes_share_the_release_seed_and_grid():
+    recipes = dict(load_recipes())
+    lines, sites = recipes["power-lines-2026-10-v1.yaml"], recipes["power-sites-2026-10-v1.yaml"]
+    for recipe in (lines, sites):
+        assert recipe["id"] == recipe["sprout"]["id"]
+        assert recipe["source"]["release"] == "2026-10-21.0"
+        assert recipe["source"]["licence"] == "ODbL-1.0"
+        assert recipe["grid"] == {"crs": "EPSG:4326", "pixel_size_deg": 0.00025, "origin": [-180, 90], "dtype": "uint8"}
+        assert recipe["seed"]["path"] == "gs://nature-watch-bucket/seeds/infrastructure/overture/2026-10-21.0/"
+    assert lines["sprout"]["path"] == "gs://nature-watch-bucket/sprouts/power-lines/2026-10/v1/"
+    assert sites["sprout"]["path"] == "gs://nature-watch-bucket/sprouts/power-sites/2026-10/v1/"
+    assert lines["tiles"]["path"] == "gs://nature-watch-tiles/energy/2026-10/v1/power-lines.pmtiles"
+    assert sites["tiles"]["path"] == "gs://nature-watch-tiles/energy/2026-10/v1/power-sites.pmtiles"
+    assert (lines["tiles"]["max_zoom"], lines["tiles"]["share_steps"], lines["tiles"]["share_full"]) == (11, 8, 0.1)
+    assert (sites["tiles"]["min_zoom"], sites["tiles"]["point_max_zoom"], sites["tiles"]["max_zoom"]) == (2, 9, 14)
+    assert sorted(lines["lines"]["voltage_classes"]) == [1, 2, 3, 4]
+    groups = sites["sites"]["group_order"]
+    assert set(groups) == {name for value, name in sites["sprout"]["bands"]["source"].items() if value > 0} - {"substation"}
+    sources = [s for values in sites["sites"]["sources"].values() for s in values]
+    assert len(sources) == len(set(sources))

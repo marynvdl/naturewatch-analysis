@@ -134,7 +134,8 @@ def layer(sprout_path: str | Path):
     west0, pixel, _, north0, _, neg = source.GetGeoTransform()
     width, height = source.RasterXSize, source.RasterYSize
     srs = source.GetProjection()
-    level_band, surface_band = source.GetRasterBand(1), source.GetRasterBand(2)  # render keeps `source` alive below
+    level_band = source.GetRasterBand(1)  # render keeps `source` alive below
+    surface_band = source.GetRasterBand(2) if source.RasterCount > 1 else None  # a one-band sprout has no surface
 
     def mem(array: np.ndarray, col: int, row: int, dtype) -> gdal.Dataset:
         rows, cols = array.shape
@@ -155,7 +156,7 @@ def layer(sprout_path: str | Path):
         level = level_band.ReadAsArray(col0, row0, col1 - col0, row1 - row0)
         if not level.any():
             return None
-        surface = surface_band.ReadAsArray(col0, row0, col1 - col0, row1 - row0)
+        surface = surface_band.ReadAsArray(col0, row0, col1 - col0, row1 - row0) if surface_band else np.zeros_like(level)
         bounds = cropland.tile_bounds_3857(z, x, y)
         road = gdal.Warp(
             "", mem((level > 0).astype(np.uint8), col0, row0, gdal.GDT_Byte), format="MEM", outputBounds=bounds,
@@ -178,7 +179,7 @@ def layer(sprout_path: str | Path):
     return render
 
 
-def build(sprout_path: Path, bounds, top_zoom: int, steps: int, dest: Path, full: float = 1.0) -> dict:
+def build(sprout_path: Path, bounds, top_zoom: int, steps: int, dest: Path, full: float = 1.0, name: str = "roads") -> dict:
     started = time.perf_counter()
     render = layer(sprout_path)
     entries: list[pyramid.Entry] = []
@@ -189,7 +190,7 @@ def build(sprout_path: Path, bounds, top_zoom: int, steps: int, dest: Path, full
             roots[(x, y)] = value
     entries += pyramid.upper_levels(roots, SHARD_ZOOM, reduce, lambda t: encode(t, steps, full))
     entries.sort(key=lambda entry: entry[0])
-    metadata = {"name": "roads", "format": "png", "type": "overlay", "description": __doc__.split("\n\n")[1]}
+    metadata = {"name": name, "format": "png", "type": "overlay", "description": __doc__.split("\n\n")[1]}
     written = pyramid.write_archive(entries, dest, pyramid.archive_header(bounds, 0, top_zoom), metadata)
     by_zoom: dict[int, dict] = {}
     for tile_id, data in entries:

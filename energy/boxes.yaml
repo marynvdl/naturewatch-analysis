@@ -1,0 +1,6 @@
+# Boxes for the Energy recipes (task 01 of the Energy parcel in naturewatch-app).
+# window: the 2° sample windows for the seed, sprouts and tile sample. west, south, east, north.
+# check: small boxes inside the windows for the imagery check.
+boxes:
+  - {name: karoo, kind: window, bounds: [22.3, -32.6, 24.3, -30.6], label: "Karoo: Beaufort West, Karoo National Park and De Aar"}
+  - {name: gironde, kind: window, bounds: [-1.5, 43.8, 0.5, 45.8], label: "Rural France: Gironde and the Landes, with Bordeaux and Cestas"}
