@@ -210,7 +210,7 @@ def totals(kind: str, records) -> dict:
                     by_value[k] = by_value.get(k, 0) + v
             out[layer] = {
                 "with_data": sum(1 for i in items if i["bytes"]),
-                **{key: round(sum(i[key] for i in items), 1) for key in ("features", "marked_cells", "bytes", "seconds")},
+                **{key: round(sum(i.get(key, 0) for i in items), 1) for key in ("features", "marked_cells", "bytes", "seconds")},
                 "by_value": by_value,
             }
         out["seconds"] = round(sum(r["seconds"] for r in records), 1)
