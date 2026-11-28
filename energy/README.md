@@ -203,3 +203,19 @@ The user chose on 28 November 2026 to burn wind farms by their turbines only: `o
 gcloud batch jobs describe energy-2026-10-sprout-202611281042 --location=europe-west1 --project=nature-watch-387210
 gcloud batch jobs delete energy-2026-10-sprout-202611281042 --location=europe-west1 --project=nature-watch-387210   # cancel
 ```
+
+Second run result: 31 min, 10:44–11:15 UTC, every task succeeding first time, block time 11,969 s in all (625 s of fetches), peak 3.1 GB. `power-lines` is the same as in the first run, cell for cell in the totals. `power-sites` has 42,231,558 marked cells in 298 blocks, 551,995,696 bytes: 31.9 M solar, 3.9 M substation, 2.9 M coal, 1.5 M oil and gas, 0.52 M nuclear, 0.47 M wind (from 39.2 M), 0.42 M other, 0.34 M bioenergy and waste, 0.24 M hydro, 27,000 storage. The windows match as in the first run: Karoo and Gironde sites in every cell, Gironde lines but for the 27 edge cells above. `collect` wrote both VRTs and STAC sets again, and the pilot files in the scratch prefix were deleted.
+
+Each block COG keeps about 1.9 MB of empty 512-pixel tiles, so the sprouts are about 1.35 GB in all, not the 0.1–0.3 GB estimated from the marked cells.
+
+**Cost.** At spot prices of about $0.07 an hour for `e2-standard-4` and $0.045 for `e2-highmem-2`:
+
+| Run | Machine time | Compute |
+| --- | --- | --- |
+| Pilots, the failed first seed pilot included | about 5 machine-minutes | under $0.01 |
+| Seed | 20 tasks of about 4 minutes with start-up, about 1.3 machine-hours | about $0.10 |
+| Sprouts, first run | 3.2 hours of blocks, about 4 machine-hours with start-up | about $0.18 |
+| Sprouts, second run | 3.3 hours of blocks, about 4 machine-hours with start-up | about $0.19 |
+| Standard disk, 100 GB a sprout machine | about 800 GB-hours | about $0.05 |
+
+About $0.50 in all, inside the approved $0.30–0.65 for the seed and one sprout run plus $0.20–0.45 for the rerun. Reading Overture and the seed inside the region cost nothing; the window check copied about 50 MB out. Storage is about $0.27 a month for the seed and $0.03 for the sprouts at $0.023 per GB.
